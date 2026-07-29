@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>官网新品情报监控系统</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230f766e'/%3E%3Ctext x='32' y='41' text-anchor='middle' font-size='30' font-family='Arial' font-weight='700' fill='white'%3E情%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260707-macos-console" />
+  </head>
+  <body>
+    <section id="auth-screen" class="auth-screen" hidden>
+      <div class="auth-card">
+        <div class="brand">
+          <div class="mark">情</div>
+          <div>
+            <h1>新品情报</h1>
+            <p>官网新品监控平台</p>
+          </div>
+        </div>
+        <div>
+          <h2 id="auth-title">注册工作台账号</h2>
+          <p id="auth-copy">注册后即可创建自己的官网监控、产品库和通知记录。</p>
+        </div>
+        <form id="auth-form" class="auth-form" data-mode="register">
+          <label>
+            邮箱
+            <input name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+          </label>
+          <label>
+            密码
+            <input name="password" type="password" autocomplete="current-password" required minlength="8" placeholder="至少 8 位" />
+          </label>
+          <button id="auth-submit" class="primary" type="submit">注册并进入</button>
+        </form>
+        <button id="auth-toggle" class="ghost-button" type="button">已有账号？去登录</button>
+      </div>
+    </section>
+
+    <div id="app-shell" class="app-shell" hidden>
+      <aside class="side-rail">
+        <div class="brand">
+          <div class="mark">情</div>
+          <div>
+            <h1>新品情报</h1>
+            <p>Product Intel</p>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="主导航">
+          <button class="active" data-sidebar-view="products" type="button" aria-current="page">产品库</button>
+          <button data-sidebar-view="extraction" type="button">字段质量</button>
+          <button data-sidebar-view="sources" type="button">采集源</button>
+          <button data-sidebar-view="logs" type="button">通知中心</button>
+        </nav>
+
+        <div class="side-account">
+          <div class="account-avatar">W</div>
+          <div>
+            <strong id="user-email"></strong>
+            <span>企业版</span>
+          </div>
+          <button id="logout-btn" class="logout-button" type="button">退出</button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <label class="global-search">
+            <span>搜索产品或官网</span>
+            <input type="search" placeholder="搜索产品、官网、价格变化或监控记录" />
+          </label>
+          <div class="topbar-actions">
+            <button id="refresh-btn" class="secondary" type="button">刷新数据</button>
+          </div>
+        </header>
+
+        <section class="command-panel">
+          <div class="command-copy">
+            <span class="section-kicker">官网新品监控</span>
+            <h2>输入官网，持续追踪新品发布</h2>
+            <p>首次扫描建立产品库基线，后续发现新增产品、价格变化和关键卖点时进入通知与产品库。</p>
+          </div>
+
+          <form id="site-form" class="site-form command-form">
+            <div class="url-row">
+              <label class="url-field">
+                官网网址
+                <input name="url" required placeholder="https://www.example.com" />
+              </label>
+              <button class="primary" type="submit">开始监控</button>
+            </div>
+
+            <div class="form-row">
+              <label>
+                品牌名称
+                <input name="name" placeholder="留空自动识别" />
+              </label>
+              <label>
+                品类
+                <input name="category" placeholder="美妆 / 3C / 家电" />
+              </label>
+              <label>
+                优先级
+                <select name="priority">
+                  <option value="1">高</option>
+                  <option value="2" selected>中</option>
+                  <option value="3">低</option>
+                </select>
+              </label>
+              <label>
+                检查间隔
+                <select name="scan_interval_minutes">
+                  <option value="30">30 分钟</option>
+                  <option value="60" selected>1 小时</option>
+                  <option value="180">3 小时</option>
+                  <option value="360">6 小时</option>
+                  <option value="720">12 小时</option>
+                </select>
+              </label>
+            </div>
+
+            <section class="advanced">
+              <button
+                id="advanced-toggle"
+                class="advanced-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="advanced-panel"
+              >
+                筛选与通知设置
+              </button>
+              <div id="advanced-panel" class="advanced-grid" hidden>
+                <label>
+                  包含关键词
+                  <input name="include_keywords" placeholder="new, launch, 新品, 上新" />
+                </label>
+                <label>
+                  排除关键词
+                  <input name="exclude_keywords" placeholder="sale, outlet, 二手" />
+                </label>
+                <label>
+                  Webhook 通知地址
+                  <input name="webhook_url" placeholder="飞书 / 企业微信 / 钉钉机器人地址" />
+                </label>
+                <fieldset class="notification-policy">
+                  <legend>通知事件</legend>
+                  <label><input type="checkbox" name="notification_events" value="product_new" checked /> 新增产品</label>
+                  <label><input type="checkbox" name="notification_events" value="price_change" /> 价格变化</label>
+                  <label><input type="checkbox" name="notification_events" value="availability_change" /> 库存变化</label>
+                  <label><input type="checkbox" name="notification_events" value="description_change" /> 描述变化</label>
+                  <label><input type="checkbox" name="notification_events" value="text_change" /> 页面文本变化</label>
+                </fieldset>
+                <label>
+                  备注
+                  <textarea name="notes" rows="2" placeholder="关注原因、负责人、品类线索"></textarea>
+                </label>
+              </div>
+            </section>
+          </form>
+        </section>
+
+        <section class="function-panel">
+          <nav class="feature-tabs" aria-label="功能切换" role="tablist">
+            <button class="active" data-view="products">
+              <span>产品库</span>
+              <strong id="count-products">0</strong>
+              <small>已盘点产品总数</small>
+            </button>
+            <button data-view="extraction">
+              <span>近 7 天新品</span>
+              <strong id="count-extraction">0</strong>
+              <small>新增产品发现</small>
+            </button>
+            <button data-view="sources">
+              <span>采集范围</span>
+              <strong id="count-sources">0</strong>
+              <small>系统从哪里找商品</small>
+            </button>
+            <button data-view="logs">
+              <span>待处理提醒</span>
+              <strong id="count-logs">0</strong>
+              <small>未读 / 失败 / 跟进</small>
+            </button>
+          </nav>
+        </section>
+
+        <div class="dashboard-grid">
+          <section class="result-panel">
+            <div class="result-head">
+              <div>
+                <span id="current-site-label" class="section-kicker">全部官网</span>
+                <h2 id="view-title">新品结果</h2>
+                <p id="view-subtitle">基线之后发现的新产品会进入这里。</p>
+              </div>
+              <div id="view-actions" class="view-actions"></div>
+            </div>
+            <div id="view-content" class="view-content"></div>
+          </section>
+
+          <aside class="insights-rail">
+            <section class="side-card calendar-card">
+              <div class="side-head">
+                <div>
+                  <span class="section-kicker">时间线</span>
+                  <h3 id="calendar-title">本月监控</h3>
+                </div>
+                <small>基线 / 新品 / 失败</small>
+              </div>
+              <div id="monitor-calendar" class="calendar-grid"></div>
+              <div class="calendar-legend">
+                <span><b class="dot baseline"></b>基线</span>
+                <span><b class="dot launch"></b>新品</span>
+                <span><b class="dot failed"></b>失败</span>
+              </div>
+            </section>
+
+            <section class="side-card monitor-card">
+              <div class="side-head">
+                <div>
+                  <span class="section-kicker">筛选对象</span>
+                  <h3>已监控官网</h3>
+                </div>
+                <button id="clear-site-filter" class="ghost-button" type="button">全部</button>
+              </div>
+              <div id="monitor-list" class="monitor-list"></div>
+            </section>
+          </aside>
+        </div>
+      </main>
+    </div>
+
+    <template id="product-template">
+      <article class="product-card">
+        <img class="product-image" alt="" />
+        <div class="product-body">
+          <div class="product-top">
+            <div>
+              <span class="eyebrow"></span>
+              <h3></h3>
+            </div>
+            <span class="price"></span>
+          </div>
+          <p class="desc"></p>
+          <ul class="features"></ul>
+          <div class="product-foot">
+            <span class="time"></span>
+            <a target="_blank" rel="noreferrer">查看产品</a>
+          </div>
+          <div class="inbox-actions">
+            <button data-status="read">已读</button>
+            <button data-status="important">重要</button>
+            <button data-status="follow_up">待跟进</button>
+            <button data-status="archived">归档</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+    <div id="modal-root"></div>
+
+    <script src="/static/app.js?v=20260707-macos-console"></script>
+  </body>
+</html>

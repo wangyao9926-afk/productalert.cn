@@ -1,0 +1,1338 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>新品情报 - Ant Design SaaS 后台预览</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --sider: #ffffff;
+      --card: #ffffff;
+      --text: rgba(0, 0, 0, .88);
+      --secondary: rgba(0, 0, 0, .65);
+      --tertiary: rgba(0, 0, 0, .45);
+      --border: #f0f0f0;
+      --border-strong: #d9d9d9;
+      --primary: #1677ff;
+      --primary-bg: #e6f4ff;
+      --success: #52c41a;
+      --success-bg: #f6ffed;
+      --warning: #faad14;
+      --warning-bg: #fffbe6;
+      --error: #ff4d4f;
+      --error-bg: #fff2f0;
+      --radius: 8px;
+      --shadow: 0 6px 16px rgba(0, 0, 0, .04), 0 3px 6px -4px rgba(0, 0, 0, .08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5715;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      color: var(--text);
+      background: #fff;
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 208px minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .sider {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      border-right: 1px solid var(--border);
+      background: var(--sider);
+    }
+
+    .brand {
+      height: 64px;
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: #fff;
+      background: #111827;
+      font-weight: 700;
+    }
+
+    .brand strong {
+      display: block;
+      overflow: hidden;
+      font-size: 16px;
+      line-height: 22px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .brand span,
+    .user span {
+      color: var(--tertiary);
+      font-size: 12px;
+    }
+
+    .menu {
+      display: grid;
+      align-content: start;
+      gap: 4px;
+      padding: 16px 12px;
+    }
+
+    .menu button {
+      height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 0;
+      border-radius: var(--radius);
+      padding: 0 12px;
+      color: var(--secondary);
+      background: transparent;
+      text-align: left;
+      font-weight: 600;
+    }
+
+    .menu button::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #bfbfbf;
+    }
+
+    .menu button.active {
+      color: var(--primary);
+      background: var(--primary-bg);
+    }
+
+    .menu button.active::before {
+      background: var(--primary);
+    }
+
+    .user {
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      margin: 0 12px 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: #fff;
+      background: var(--primary);
+      font-weight: 700;
+    }
+
+    .user strong {
+      display: block;
+      overflow: hidden;
+      font-size: 13px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .logout {
+      height: 28px;
+      padding: 0 10px;
+      color: var(--secondary);
+      font-size: 12px;
+      background: #fafafa;
+    }
+
+    .shell {
+      min-width: 0;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: 56px minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(320px, 520px) 1fr auto;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      background: rgba(255, 255, 255, .82);
+      backdrop-filter: blur(14px);
+    }
+
+    .search {
+      position: relative;
+    }
+
+    .search input {
+      width: 100%;
+      height: 32px;
+      border: 1px solid var(--border-strong);
+      border-radius: 16px;
+      padding: 0 12px 0 34px;
+      outline: none;
+      background: #fff;
+    }
+
+    .search::before {
+      content: "⌕";
+      position: absolute;
+      left: 12px;
+      top: 3px;
+      color: var(--tertiary);
+      font-size: 18px;
+      pointer-events: none;
+    }
+
+    .top-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      border-color: var(--primary);
+      color: #fff;
+      background: var(--primary);
+    }
+
+    .btn-primary:hover {
+      color: #fff;
+      background: #4096ff;
+    }
+
+    .btn-text {
+      border: 0;
+      color: var(--primary);
+      background: transparent;
+    }
+
+    .content {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 16px;
+      padding: 24px;
+      overflow: hidden;
+    }
+
+    .page-header {
+      display: grid;
+      grid-template-columns: minmax(320px, .58fr) minmax(560px, 1fr);
+      gap: 24px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 30px;
+      font-weight: 700;
+    }
+
+    .page-header p {
+      margin: 8px 0 0;
+      color: var(--secondary);
+      font-size: 14px;
+    }
+
+    .monitor-form {
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) 112px;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      grid-column: 1 / -1;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--secondary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    input, select {
+      height: 32px;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      padding: 0 11px;
+      color: var(--text);
+      background: #fff;
+      outline: none;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(22, 119, 255, .12);
+    }
+
+    .advanced-panel {
+      display: none;
+      grid-column: 1 / -1;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .advanced-panel.open {
+      display: grid;
+    }
+
+    .advanced-panel label[data-email-field][hidden] {
+      display: none;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .stat-card {
+      min-height: 104px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+      text-align: left;
+    }
+
+    .stat-card.active {
+      border-color: #91caff;
+      background: linear-gradient(180deg, #f0f8ff 0%, #fff 100%);
+    }
+
+    .stat-card span {
+      color: var(--secondary);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .stat-card strong {
+      align-self: center;
+      justify-self: end;
+      font-size: 32px;
+      line-height: 40px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-card small {
+      color: var(--tertiary);
+      font-size: 12px;
+    }
+
+    .workbench {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 16px;
+    }
+
+    .card {
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    [data-module],
+    tbody tr {
+      cursor: pointer;
+    }
+
+    [data-module]:hover,
+    .panel:hover,
+    .table-card:hover {
+      border-color: #91caff;
+      box-shadow: 0 8px 22px rgba(22, 119, 255, .08), 0 3px 6px -4px rgba(0, 0, 0, .08);
+    }
+
+    .table-card {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .card-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+      border-bottom: 1px solid var(--border);
+      padding: 16px 20px;
+    }
+
+    .card-head h2 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 26px;
+    }
+
+    .card-head p {
+      margin: 4px 0 0;
+      color: var(--secondary);
+      font-size: 13px;
+    }
+
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .filters button,
+    .row-actions button,
+    .panel-title button {
+      height: 28px;
+      border-radius: 6px;
+      padding: 0 10px;
+      color: var(--secondary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .filters button.active,
+    .row-actions button.active {
+      color: var(--primary);
+      border-color: #91caff;
+      background: var(--primary-bg);
+    }
+
+    .table-wrap {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .table-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      color: var(--secondary);
+      background: #fff;
+      font-size: 13px;
+    }
+
+    .pager {
+      display: inline-flex;
+      gap: 6px;
+    }
+
+    .pager button {
+      height: 28px;
+      min-width: 28px;
+      padding: 0 8px;
+      border-radius: 6px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 1040px;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      height: 40px;
+      border-bottom: 1px solid var(--border);
+      padding: 0 14px;
+      color: var(--secondary);
+      background: #fafafa;
+      font-size: 12px;
+      text-align: left;
+      font-weight: 600;
+    }
+
+    td {
+      height: 54px;
+      border-bottom: 1px solid var(--border);
+      padding: 8px 14px;
+      color: var(--secondary);
+      font-size: 13px;
+      vertical-align: middle;
+    }
+
+    tr:hover td {
+      background: #fafafa;
+    }
+
+    .product {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .product strong {
+      overflow: hidden;
+      max-width: 520px;
+      color: var(--text);
+      font-size: 13px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .product span,
+    .source-cell span {
+      overflow: hidden;
+      color: var(--tertiary);
+      font-size: 12px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .source-cell {
+      display: grid;
+      gap: 2px;
+    }
+
+    .source-cell strong {
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 22px;
+      border-radius: 4px;
+      padding: 0 7px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .tag.blue { color: var(--primary); background: var(--primary-bg); }
+    .tag.green { color: #389e0d; background: var(--success-bg); }
+    .tag.orange { color: #d48806; background: var(--warning-bg); }
+    .tag.gray { color: var(--secondary); background: #f5f5f5; }
+    .tag.red { color: #cf1322; background: var(--error-bg); }
+
+    .row-actions {
+      display: inline-flex;
+      gap: 6px;
+    }
+
+    .side-panel {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 16px;
+      overflow: hidden;
+    }
+
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .panel-title strong {
+      font-size: 15px;
+    }
+
+    .calendar {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+      color: var(--tertiary);
+      font-size: 12px;
+    }
+
+    .calendar span {
+      display: grid;
+      place-items: center;
+      height: 24px;
+    }
+
+    .day {
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .day.active {
+      color: var(--primary);
+      border-color: #91caff;
+      background: var(--primary-bg);
+    }
+
+    .day.fail {
+      color: #cf1322;
+      background: var(--error-bg);
+    }
+
+    .legend {
+      display: flex;
+      gap: 12px;
+      margin-top: 12px;
+      color: var(--tertiary);
+      font-size: 12px;
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 5px;
+      border-radius: 50%;
+      vertical-align: middle;
+    }
+
+    .site-list {
+      min-height: 0;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+      overflow: auto;
+    }
+
+    .site {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      border-radius: 8px;
+      padding: 12px;
+      text-align: left;
+    }
+
+    .site-actions {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .site-actions button {
+      height: 26px;
+      border-radius: 6px;
+      padding: 0 8px;
+      color: var(--secondary);
+      font-size: 12px;
+    }
+
+    .site-actions button[data-site-action="delete"] {
+      color: #cf1322;
+    }
+
+    .site strong {
+      display: block;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 13px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .site span {
+      color: var(--tertiary);
+      font-size: 12px;
+    }
+
+    .site b {
+      color: var(--primary);
+      font-size: 22px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .toast-stack {
+      position: fixed;
+      z-index: 99;
+      top: 24px;
+      right: 24px;
+      display: grid;
+      gap: 8px;
+      width: min(360px, calc(100vw - 48px));
+      pointer-events: none;
+    }
+
+    .toast {
+      display: grid;
+      gap: 2px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, .96);
+      box-shadow: 0 9px 28px rgba(0, 0, 0, .12);
+      animation: toast-in .16s ease-out both;
+    }
+
+    .toast strong { font-size: 14px; }
+    .toast span { color: var(--secondary); font-size: 13px; }
+
+    .modal-mask {
+      position: fixed;
+      z-index: 120;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(0, 0, 0, .28);
+      padding: 24px;
+    }
+
+    .modal-mask.open {
+      display: grid;
+    }
+
+    .modal-card {
+      width: min(560px, 100%);
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, .18);
+      overflow: hidden;
+    }
+
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+      padding: 16px 20px;
+    }
+
+    .modal-body {
+      display: grid;
+      gap: 10px;
+      padding: 18px 20px;
+      color: var(--secondary);
+      font-size: 14px;
+    }
+
+    .modal-body strong {
+      color: var(--text);
+    }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 1180px) {
+      body { overflow: auto; }
+      .app { height: auto; grid-template-columns: 1fr; }
+      .shell { height: auto; overflow: visible; }
+      .content { overflow: visible; }
+      .page-header,
+      .workbench { grid-template-columns: 1fr; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sider">
+      <div class="brand">
+        <div class="brand-mark">情</div>
+        <div><strong>新品情报</strong><span>Product Intel</span></div>
+      </div>
+      <nav class="menu" aria-label="主导航">
+        <button class="active" type="button" data-nav="products">产品库</button>
+        <button type="button" data-nav="quality">字段质量</button>
+        <button type="button" data-nav="sources">采集源</button>
+        <button type="button" data-nav="alerts">通知中心</button>
+        <button type="button" data-nav="audit">审计日志</button>
+      </nav>
+      <div class="user">
+        <div class="avatar">W</div>
+        <div><strong>wangyao9926@...</strong><span>企业版</span></div>
+        <button class="logout" type="button" data-action="logout">退出</button>
+      </div>
+    </aside>
+
+    <section class="shell">
+      <header class="topbar">
+        <label class="search" aria-label="全局搜索">
+          <input id="search" type="search" placeholder="搜索产品、官网、价格变化或监控记录" />
+        </label>
+        <div></div>
+        <div class="top-actions">
+          <button type="button" data-action="help">帮助</button>
+          <button class="btn-primary" type="button" data-action="refresh">刷新数据</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="page-header" data-module="监控命令区">
+          <div>
+            <span class="eyebrow" id="section-kicker">官网新品监控</span>
+            <h1 id="page-title">输入官网，持续追踪新品发布</h1>
+            <p id="page-copy">首次扫描建立产品库基线，后续发现新增产品、价格变化和关键卖点时进入通知与产品库。</p>
+          </div>
+
+          <form class="monitor-form" id="monitor-form">
+            <label>官网网址<input name="url" value="https://www.example.com" /></label>
+            <button class="btn-primary" type="submit">开始监控</button>
+            <div class="form-row">
+              <label>品牌名称<input name="brand" value="留空自动识别" /></label>
+              <label>品类<input name="category" value="美妆 / 3C / 家电" /></label>
+              <label>优先级<select name="priority"><option>中</option><option>高</option><option>低</option></select></label>
+              <label>检查间隔<select name="interval"><option>1 小时</option><option>30 分钟</option><option>6 小时</option></select></label>
+            </div>
+            <button class="btn-text" type="button" data-action="advanced">筛选与通知设置</button>
+            <div class="advanced-panel" id="advanced-panel">
+              <label>通知方式<select id="notify-channel"><option>站内 + 邮件</option><option>仅站内</option></select></label>
+              <label data-email-field>通知邮箱<input id="notify-email" type="email" value="ops@example.com" /></label>
+              <label>价格阈值<input value="任意价格变化" /></label>
+              <label>字段规则<input value="价格 / 库存 / 标题 / 图片" /></label>
+            </div>
+          </form>
+        </section>
+
+        <section class="stats">
+          <button class="stat-card active" type="button" data-metric="products"><span>产品库</span><strong id="count-products">200</strong><small>已盘点产品总数</small></button>
+          <button class="stat-card" type="button" data-metric="new"><span>近 7 天新品</span><strong id="count-new">18</strong><small>新增产品发现</small></button>
+          <button class="stat-card" type="button" data-metric="sources"><span>采集范围</span><strong id="count-sources">2</strong><small>系统从哪里找商品</small></button>
+          <button class="stat-card" type="button" data-metric="pending"><span>待处理提醒</span><strong id="count-pending">2</strong><small>未读 / 失败 / 跟进</small></button>
+        </section>
+
+        <section class="workbench">
+          <div class="card table-card" data-module="产品库表格">
+            <div class="card-head">
+              <div>
+                <span class="eyebrow">全部官网</span>
+                <h2 id="table-title">产品库与新品发现</h2>
+                <p id="table-copy">这里展示当前已盘点到的产品；基线之后新增的产品会用醒目标记区分。</p>
+              </div>
+              <div class="filters">
+                <button class="active" type="button" data-filter="all">全部商品 200</button>
+                <button type="button" data-filter="new">新增商品 0</button>
+                <button type="button" data-filter="pending">待处理 1</button>
+                <button type="button" data-filter="marked">已标注 1</button>
+                <button type="button" data-action="export">导出 CSV</button>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>商品</th>
+                    <th>状态</th>
+                    <th class="num">价格</th>
+                    <th>库存/变体</th>
+                    <th>来源与置信度</th>
+                    <th>发现时间</th>
+                    <th>处理</th>
+                  </tr>
+                </thead>
+                <tbody id="product-body"></tbody>
+              </table>
+            </div>
+            <div class="table-footer" id="table-footer">
+              <span>共 200 条，当前展示 1-20 条</span>
+              <div class="pager">
+                <button type="button" data-action="page-prev">上一页</button>
+                <button class="active" type="button" data-action="page-1">1</button>
+                <button type="button" data-action="page-2">2</button>
+                <button type="button" data-action="page-next">下一页</button>
+              </div>
+            </div>
+          </div>
+
+          <aside class="side-panel">
+            <section class="panel" data-module="时间线">
+              <div class="panel-title"><strong>时间线</strong><button type="button" data-action="timeline-mode">基线 / 新品 / 失败</button></div>
+              <div class="calendar" id="calendar"></div>
+              <div class="legend"><span><i style="background:#52c41a"></i>基线</span><span><i style="background:#1677ff"></i>新品</span><span><i style="background:#ff4d4f"></i>失败</span></div>
+            </section>
+            <section class="panel" data-module="详情面板">
+              <div class="panel-title"><strong id="detail-title">当前详情</strong><button type="button" data-action="detail-close">收起</button></div>
+              <p id="detail-copy" style="margin:0;color:var(--secondary);font-size:13px;line-height:1.6;">点击产品行、打开按钮、指标卡或官网卡片后，这里会显示对应详情。</p>
+            </section>
+            <section class="panel site-list" data-module="已监控官网">
+              <div class="panel-title"><strong>已监控官网</strong><button type="button" data-action="all-sites">全部</button></div>
+              <div class="site" data-site="Anker" role="button" tabindex="0"><div><strong>https://www.anker.com/</strong><span>未分类 · 中优先级</span></div><b>126</b><div class="site-actions"><button type="button" data-site-action="view">查看</button><button type="button" data-site-action="pause">暂停</button><button type="button" data-site-action="delete">删除</button></div></div>
+              <div class="site" data-site="Flextail" role="button" tabindex="0"><div><strong>https://www.flextail.com/</strong><span>未分类 · 中优先级</span></div><b>74</b><div class="site-actions"><button type="button" data-site-action="view">查看</button><button type="button" data-site-action="pause">暂停</button><button type="button" data-site-action="delete">删除</button></div></div>
+            </section>
+          </aside>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+  <div id="modal-root" class="modal-mask" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <section class="modal-card">
+      <div class="modal-head">
+        <strong id="modal-title">详情</strong>
+        <button type="button" data-action="modal-close">关闭</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+    const datasets = {
+      products: {
+        kicker: "官网新品监控",
+        title: "产品库与新品发现",
+        copy: "这里展示当前已盘点到的产品；基线之后新增的产品会用醒目标记区分。",
+        filters: [["all", "全部商品 200"], ["new", "新增商品 18"], ["pending", "待处理 1"], ["marked", "已标注 1"]],
+        columns: ["商品", "状态", "价格", "库存/变体", "来源与置信度", "发现时间", "处理"],
+        rows: [
+          ["pending", "Anker Prime DL7400 Docking Station (14-in-1, Triple Display, DisplayLink)", "基线 / 待跟进", "$299.99", "有货", "官网首页 / 84% · JSON-LD", "2026/7/6 20:14:57"],
+          ["marked", "Anker 563 USB-C Docking Station (10-in-1)", "基线 / 未读", "$199.99", "有货", "官网首页 / 84% · JSON-LD", "2026/7/6 20:14:55"],
+          ["all", "Refurbished Anker 575 USB-C Docking Station (13-in-1)", "基线", "$99.99", "有货", "官网首页 / 84% · JSON-LD", "2026/7/6 20:14:54"],
+          ["all", "Anker 575 USB-C Docking Station (13-in-1)", "基线", "$199.99", "有货", "官网首页 / 84% · JSON-LD", "2026/7/6 20:14:53"],
+          ["all", "Anker USB-C Hub (14-in-1, Triple Display)", "基线", "$69.99", "有货", "官网首页 / 84% · JSON-LD", "2026/7/6 20:14:52"]
+        ],
+      },
+      quality: {
+        kicker: "字段质量",
+        title: "字段质量与提取完整度",
+        copy: "字段质量用于校验抓取结果是否完整：价格、库存/变体、图片、标题、描述、卖点、来源置信度都会被检查，缺失或低置信字段进入复核队列。",
+        filters: [["all", "全部字段 200"], ["bad", "低置信 17"], ["missing", "缺字段 31"], ["ready", "可导出 152"]],
+        columns: ["商品", "价格", "图片", "描述", "卖点", "置信度", "处理"],
+        rows: [
+          ["bad", "Anker Prime DL7400 Docking Station", "完整", "完整", "缺失", "完整", "68% · 需复核"],
+          ["missing", "Anker 563 USB-C Docking Station", "完整", "缺失", "完整", "完整", "74% · 缺描述"],
+          ["ready", "Anker 575 USB-C Docking Station", "完整", "完整", "完整", "完整", "91% · 可导出"],
+          ["bad", "Anker USB-C Hub", "完整", "完整", "缺失", "缺失", "62% · 需规则"],
+        ],
+      },
+      sources: {
+        kicker: "采集源",
+        title: "采集范围与入口管理",
+        copy: "管理官网首页、Sitemap、RSS、列表页和自定义页面。",
+        filters: [["all", "全部入口 6"], ["healthy", "正常 4"], ["retry", "重试 1"], ["failed", "失败 1"]],
+        columns: ["入口", "类型", "优先级", "基线", "最近扫描", "健康状态", "处理"],
+        rows: [
+          ["healthy", "https://www.anker.com/", "官网首页", "中", "已建立", "2026/7/7 14:10", "正常"],
+          ["healthy", "https://www.anker.com/sitemap.xml", "Sitemap", "高", "已建立", "2026/7/7 14:08", "正常"],
+          ["retry", "https://www.anker.com/products", "列表页", "中", "已建立", "2026/7/7 13:40", "重试中"],
+          ["failed", "https://www.anker.com/rss", "RSS", "低", "未完成", "2026/7/7 12:21", "失败"],
+        ],
+      },
+      alerts: {
+        kicker: "通知中心",
+        title: "提醒与处理队列",
+        copy: "查看新品、价格变化、扫描失败和需要跟进的事件。",
+        filters: [["all", "全部提醒 12"], ["unread", "未读 5"], ["failed", "失败 2"], ["sent", "已发送 5"]],
+        columns: ["事件", "类型", "状态", "渠道", "尝试", "时间", "处理"],
+        rows: [
+          ["unread", "DL7400 Docking Station 新增", "新品", "未读", "站内 + 邮件", "0/3", "2026/7/7 14:12"],
+          ["failed", "RSS 入口扫描失败", "采集失败", "失败", "站内", "3/3", "2026/7/7 13:55"],
+          ["sent", "Anker 563 价格变化", "价格", "已发送", "邮件", "1/3", "2026/7/7 12:40"],
+          ["unread", "Anker USB-C Hub 库存变化", "库存", "未读", "站内", "0/3", "2026/7/7 11:20"],
+        ],
+      },
+      audit: {
+        kicker: "审计日志",
+        title: "操作审计与风险记录",
+        copy: "追踪账号、规则、导出和采集入口的关键操作。",
+        filters: [["all", "全部日志 48"], ["rule", "规则 12"], ["export", "导出 7"], ["security", "安全 3"]],
+        columns: ["操作", "对象", "账号", "IP", "结果", "时间", "处理"],
+        rows: [
+          ["rule", "更新字段提取规则", "wangyao9926", "127.0.0.1", "成功", "2026/7/7 14:05", "查看"],
+          ["export", "导出产品 CSV", "wangyao9926", "127.0.0.1", "成功", "2026/7/7 13:44", "查看"],
+          ["security", "登录失败", "unknown", "127.0.0.1", "已拦截", "2026/7/7 12:11", "查看"],
+          ["rule", "新增采集入口", "wangyao9926", "127.0.0.1", "成功", "2026/7/7 10:28", "查看"],
+        ],
+      },
+    };
+
+    let currentView = "products";
+    let currentFilter = "all";
+
+    const seedProducts = datasets.products.rows.slice();
+    while (datasets.products.rows.length < 200) {
+      const seed = seedProducts[datasets.products.rows.length % seedProducts.length];
+      const index = datasets.products.rows.length + 1;
+      datasets.products.rows.push([
+        index <= 18 ? "new" : index % 17 === 0 ? "pending" : index % 13 === 0 ? "marked" : "all",
+        `${seed[1]} #${String(index).padStart(3, "0")}`,
+        index <= 18 ? "新增" : index % 17 === 0 ? "基线 / 待跟进" : index % 13 === 0 ? "基线 / 未读" : "基线",
+        `$${(49 + (index % 8) * 25).toFixed(2)}`,
+        "有货",
+        "官网首页 / 84% · JSON-LD",
+        `2026/7/6 20:${String(14 - (index % 10)).padStart(2, "0")}:${String(50 - (index % 40)).padStart(2, "0")}`,
+      ]);
+    }
+
+    function toast(title, message = "") {
+      const item = document.createElement("div");
+      item.className = "toast";
+      item.innerHTML = `<strong>${title}</strong>${message ? `<span>${message}</span>` : ""}`;
+      $("#toast-stack").appendChild(item);
+      window.setTimeout(() => {
+        item.style.opacity = "0";
+        item.style.transform = "translateY(-6px)";
+        window.setTimeout(() => item.remove(), 160);
+      }, 2400);
+    }
+
+    function setActive(buttons, activeButton) {
+      buttons.forEach((button) => button.classList.toggle("active", button === activeButton));
+    }
+
+    function tag(text) {
+      const tone = text.includes("失败") || text.includes("拦截") ? "red" : text.includes("新增") ? "blue" : text.includes("待") || text.includes("重试") || text.includes("缺") || text.includes("低") ? "orange" : text.includes("未读") || text.includes("正常") || text.includes("成功") || text.includes("完整") ? "green" : "gray";
+      return `<span class="tag ${tone}">${text}</span>`;
+    }
+
+    function renderFilters(view) {
+      const config = datasets[view];
+      $(".filters").innerHTML = config.filters.map(([key, label], index) => `<button class="${index === 0 ? "active" : ""}" type="button" data-filter="${key}">${label}</button>`).join("") + '<button type="button" data-action="export">导出 CSV</button>';
+    }
+
+    function renderTable(view, filter = "all") {
+      const config = datasets[view];
+      const rows = config.rows.filter((row) => filter === "all" || row[0] === filter);
+      const visibleRows = view === "products" && filter === "all" ? rows.slice(0, 20) : rows;
+      $("thead tr").innerHTML = config.columns.map((column) => `<th>${column}</th>`).join("");
+      $("#product-body").innerHTML = visibleRows.map((row) => {
+        const cells = row.slice(1);
+        return `<tr data-kind="${row[0]}">${cells.map((cell, index) => {
+          if (index === 0) return `<td><div class="product"><strong>${cell}</strong><span>${view === "sources" ? "采集入口" : view === "audit" ? "审计对象" : "https://www.anker.com/ · 产品"}</span></div></td>`;
+          if (index === cells.length - 1) return `<td><div class="row-actions"><button type="button" data-row="important">重点</button><button type="button" data-row="follow">跟进</button><button type="button" data-row="open">打开</button></div></td>`;
+          if (String(cell).includes("/") && (String(cell).includes("JSON") || String(cell).includes("HTML"))) return `<td><div class="source-cell"><strong>${cell.split("/")[0].trim()}</strong><span>${cell.split("/").slice(1).join("/").trim()}</span></div></td>`;
+          if (["基线 / 待跟进", "基线 / 未读", "基线", "正常", "失败", "重试中", "未读", "已发送", "成功", "已拦截", "完整", "缺失"].some((word) => String(cell).includes(word))) return `<td>${tag(cell)}</td>`;
+          return `<td>${cell}</td>`;
+        }).join("")}</tr>`;
+      }).join("");
+      renderTableFooter(view, filter, rows.length, visibleRows.length);
+    }
+
+    function renderTableFooter(view, filter, total, shown) {
+      const footer = $("#table-footer");
+      const filterText = datasets[view].filters.find(([key]) => key === filter)?.[1] || "全部";
+      footer.querySelector("span").textContent = `当前：${datasets[view].title} / ${filterText}，共 ${total} 条，展示 ${shown} 条`;
+      footer.hidden = false;
+    }
+
+    function setDetail(title, copy) {
+      $("#detail-title").textContent = title;
+      $("#detail-copy").textContent = copy;
+    }
+
+    function openRecordModal(title, viewTitle) {
+      $("#modal-title").textContent = "记录详情";
+      $("#modal-body").innerHTML = `
+        <div><strong>${title}</strong></div>
+        <div>所属模块：${viewTitle}</div>
+        <div>来源链接：https://www.anker.com/</div>
+        <div>可执行操作：标记重点、加入跟进、打开官网源页面、导出当前记录。</div>
+      `;
+      $("#modal-root").classList.add("open");
+    }
+
+    function renderCalendar() {
+      const head = ["日", "一", "二", "三", "四", "五", "六"].map((d) => `<span>${d}</span>`).join("");
+      const days = Array.from({ length: 21 }, (_, i) => i + 1).map((day) => `<button class="day${day === 6 || day === 7 ? " active" : day === 10 ? " fail" : ""}" type="button">${day}</button>`).join("");
+      $("#calendar").innerHTML = head + days;
+    }
+
+    function renderView(view) {
+      currentView = view;
+      currentFilter = "all";
+      const config = datasets[view];
+      $("#section-kicker").textContent = config.kicker;
+      $("#table-title").textContent = config.title;
+      $("#table-copy").textContent = config.copy;
+      renderFilters(view);
+      renderTable(view);
+      renderCalendar();
+      setDetail(config.title, config.copy);
+    }
+
+    renderView("products");
+
+    document.addEventListener("click", (event) => {
+      if (event.target.closest("input, select, textarea")) return;
+      const button = event.target.closest("button");
+      if (!button) {
+        const row = event.target.closest("tbody tr");
+        if (row) {
+          setActive($$("#product-body tr"), row);
+          const title = row.querySelector(".product strong").textContent;
+          setDetail("记录详情", `${datasets[currentView].title}：${title}`);
+          toast("行已选中", title);
+          return;
+        }
+        const siteCard = event.target.closest(".site");
+        if (siteCard) {
+          setActive($$(".site"), siteCard);
+          setDetail("官网详情", `${siteCard.dataset.site} 的产品数、优先级、采集入口和最近扫描记录已定位。`);
+          toast("官网详情", siteCard.dataset.site);
+          return;
+        }
+        const module = event.target.closest("[data-module]");
+        if (module) toast("模块已选中", module.dataset.module);
+        return;
+      }
+
+      if (button.dataset.nav) {
+        setActive($$(".menu button"), button);
+        renderView(button.dataset.nav);
+        $(".table-card").scrollIntoView({ block: "nearest", behavior: "smooth" });
+        toast("已跳转页面", button.textContent.trim());
+        return;
+      }
+
+      if (button.dataset.metric) {
+        setActive($$(".stat-card"), button);
+        const metricText = button.querySelector("span").textContent;
+        const metricMap = {
+          products: ["products", "all", "产品库总数", "已定位到产品库全部商品。"],
+          new: ["products", "new", "近 7 天新品", "已筛选出近 7 天新增商品，当前展示新品列表。"],
+          sources: ["sources", "all", "采集范围", "已切换到采集源入口管理。"],
+          pending: ["alerts", "unread", "待处理提醒", "已切换到通知中心未读提醒。"],
+        };
+        const [view, filter, title, copy] = metricMap[button.dataset.metric] || ["products", "all", metricText, "指标已选中。"];
+        setActive($$(".menu button"), $(`.menu button[data-nav="${view}"]`));
+        renderView(view);
+        const filterButton = $(`.filters button[data-filter="${filter}"]`);
+        if (filterButton) {
+          setActive($$(".filters button[data-filter]"), filterButton);
+          renderTable(view, filter);
+        }
+        setDetail(title, copy);
+        toast("指标已选中", metricText);
+        return;
+      }
+
+      if (button.dataset.filter) {
+        currentFilter = button.dataset.filter;
+        setActive($$(".filters button[data-filter]"), button);
+        renderTable(currentView, currentFilter);
+        setDetail("筛选结果", `${datasets[currentView].title}：${button.textContent.trim()}`);
+        toast("筛选已应用", button.textContent.trim());
+        return;
+      }
+
+      if (button.dataset.action === "advanced") {
+        $("#advanced-panel").classList.toggle("open");
+        toast("高级设置", $("#advanced-panel").classList.contains("open") ? "已展开筛选与通知设置。" : "已收起筛选与通知设置。");
+        return;
+      }
+
+      if (button.dataset.action === "refresh") {
+        $("#count-new").textContent = "1";
+        renderView(currentView);
+        toast("数据已刷新", "当前页面内容已重新加载。");
+        return;
+      }
+
+      if (button.dataset.action === "export") {
+        toast("导出已开始", `${datasets[currentView].title}.csv 正在准备下载。`);
+        return;
+      }
+
+      if (button.dataset.action?.startsWith("page-")) {
+        toast("分页预览", "当前为静态预览，第 1 页展示 20 条；正式版会接入分页接口。");
+        return;
+      }
+
+      if (button.dataset.action === "detail-close") {
+        setDetail("当前详情", "点击产品行、打开按钮、指标卡或官网卡片后，这里会显示对应详情。");
+        toast("详情已收起", "已恢复默认详情说明。");
+        return;
+      }
+
+      if (button.dataset.row) {
+        const row = button.closest("tr");
+        const title = row?.querySelector(".product strong")?.textContent || "当前记录";
+        if (button.dataset.row === "open") {
+          setDetail("打开详情", `${datasets[currentView].title}：${title}`);
+          openRecordModal(title, datasets[currentView].title);
+          toast("已打开详情", title);
+          return;
+        }
+        if (button.dataset.row !== "open") {
+          button.classList.toggle("active");
+          button.textContent = button.classList.contains("active")
+            ? (button.dataset.row === "follow" ? "已跟进" : "已重点")
+            : (button.dataset.row === "follow" ? "跟进" : "重点");
+          const statusCell = row?.children?.[1];
+          if (statusCell && button.dataset.row === "follow") statusCell.innerHTML = tag("已跟进");
+          if (statusCell && button.dataset.row === "important") statusCell.innerHTML = tag("重点");
+        }
+        const label = button.dataset.row === "important" ? "已标记重点" : "已加入跟进";
+        setDetail(label, `${datasets[currentView].title}：${title}`);
+        toast(label, title);
+        return;
+      }
+
+      if (button.dataset.action === "modal-close") {
+        $("#modal-root").classList.remove("open");
+        return;
+      }
+
+      if (button.classList.contains("day")) {
+        setActive($$(".day"), button);
+        setDetail("时间线详情", `${button.textContent} 日扫描记录：基线、新品和失败状态已定位。`);
+        toast("时间线已选择", `${button.textContent} 日扫描记录`);
+        return;
+      }
+
+      if (button.dataset.siteAction) {
+        const site = button.closest(".site");
+        const siteName = site?.dataset.site || "官网";
+        if (button.dataset.siteAction === "delete") {
+          site.remove();
+          setDetail("官网已删除", `${siteName} 已从预览监控列表移除。`);
+          toast("官网已删除", siteName);
+          return;
+        }
+        if (button.dataset.siteAction === "pause") {
+          button.textContent = button.textContent === "暂停" ? "恢复" : "暂停";
+          setDetail("官网状态已更新", `${siteName} 已${button.textContent === "恢复" ? "暂停" : "恢复"}监控。`);
+          toast("官网状态已更新", siteName);
+          return;
+        }
+        setActive($$(".site"), site);
+        setDetail("官网详情", `${siteName} 的产品数、优先级、采集入口和最近扫描记录已定位。`);
+        toast("官网详情", siteName);
+        return;
+      }
+
+      const siteCard = button.closest(".site");
+      if (siteCard) {
+        setActive($$(".site"), siteCard);
+        setDetail("官网详情", `${siteCard.dataset.site} 的产品数、优先级、采集入口和最近扫描记录已定位。`);
+        toast("官网详情", siteCard.dataset.site);
+        return;
+      }
+
+      toast("操作已触发", button.textContent.trim() || "按钮");
+    });
+
+    $("#monitor-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      $("#count-sources").textContent = String(Number($("#count-sources").textContent) + 1);
+      renderView("sources");
+      setActive($$(".menu button"), $('.menu button[data-nav="sources"]'));
+      toast("已开始监控", `${form.get("brand")} · ${form.get("url")}`);
+    });
+
+    $("#search").addEventListener("input", (event) => {
+      const term = event.target.value.trim().toLowerCase();
+      $$("#product-body tr").forEach((row) => {
+        row.hidden = term && !row.textContent.toLowerCase().includes(term);
+      });
+    });
+
+    $("#notify-channel").addEventListener("change", (event) => {
+      const usesEmail = event.target.value.includes("邮件");
+      $("[data-email-field]").hidden = !usesEmail;
+      setDetail("通知设置", usesEmail ? "已选择邮件通知，请在通知邮箱中填写接收地址。" : "已选择仅站内通知，不需要填写邮箱。");
+      toast("通知方式已更新", event.target.value);
+    });
+
+    window.__previewSelfCheck = function previewSelfCheck() {
+      const checks = [
+        ["nav", $$(".menu button[data-nav]").length === Object.keys(datasets).length],
+        ["metrics", $$(".stat-card[data-metric]").length === 4],
+        ["filters", $$(".filters button[data-filter]").length >= 1],
+        ["rowActions", $$("[data-row]").length >= 3],
+        ["calendar", $$(".day").length >= 21],
+        ["sites", $$(".site[data-site]").length >= 2],
+        ["detail", !!$("#detail-title") && !!$("#detail-copy")],
+        ["footer", !!$("#table-footer")],
+      ];
+      return checks.map(([name, ok]) => ({ name, ok }));
+    };
+  </script>
+</body>
+</html>
+

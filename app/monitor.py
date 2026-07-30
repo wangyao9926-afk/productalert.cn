@@ -7,8 +7,11 @@ from datetime import datetime, timedelta, timezone
 
 from app.crawler import classify_product_url, discover_candidates, extract_candidate_product, extract_source_text, normalize_url
 from app.db import DB_BACKEND, boolean_true_sql, execute_sql, fetchall, fetchone, get_db, insert_ignore, insert_row, is_integrity_error, json_dumps, row_to_dict, select_by_id, storage_column, update_by_id, update_by_id_when
+from app.evidence_store import load_screenshot, save_screenshot
 from app.notifier import change_event_payload, should_notify_event
+from app.render_worker import try_render_page
 from app.url_safety import validate_public_http_url
+from app.visual_evidence import screenshot_hash, visual_change_ratio
 
 
 def now_iso() -> str:
@@ -527,6 +530,11 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
     if not extracted:
         return None
 
+    rendered = await try_render_page(source_data["url"], source_data.get("selector"))
+    screenshot_png = rendered.screenshot_png if rendered else None
+    screenshot_error = None if screenshot_png else "render_unavailable"
+    current_screenshot_hash = screenshot_hash(screenshot_png) if screenshot_png else None
+
     with get_db() as db:
         previous = fetchone(
             db,
@@ -538,6 +546,24 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
             """,
             (source_data["id"],),
         )
+        previous_visual = fetchone(
+            db,
+            """
+            SELECT * FROM source_snapshots
+            WHERE source_id = ? AND screenshot_path IS NOT NULL
+            ORDER BY fetched_at DESC, id DESC
+            LIMIT 1
+            """,
+            (source_data["id"],),
+        )
+        text_changed = bool(previous and previous["text_hash"] != extracted.text_hash)
+        visual_ratio = None
+        visual_changed = False
+        if screenshot_png and previous_visual:
+            previous_png = load_screenshot(previous_visual["screenshot_path"])
+            if previous_png is not None:
+                visual_ratio = visual_change_ratio(previous_png, screenshot_png)
+                visual_changed = previous_visual["screenshot_hash"] != current_screenshot_hash
         snapshot_id = insert_row(
             db,
             "source_snapshots",
@@ -553,10 +579,19 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
                 "http_status": extracted.http_status,
                 "content_type": extracted.content_type,
                 "content_length": extracted.content_length,
+                "screenshot_hash": current_screenshot_hash,
+                "visual_change_ratio": visual_ratio,
+                "screenshot_error": screenshot_error,
             },
         )
 
-        if previous and previous["text_hash"] != extracted.text_hash and not baseline_mode:
+        screenshot_saved = False
+        if screenshot_png and (baseline_mode or not previous_visual or text_changed or visual_changed):
+            screenshot_path = save_screenshot(source_data["id"], snapshot_id, screenshot_png)
+            update_by_id(db, "source_snapshots", snapshot_id, {"screenshot_path": screenshot_path})
+            screenshot_saved = True
+
+        if text_changed and not baseline_mode:
             diff_items, added, removed = create_text_diff(previous["extracted_text"] or "", extracted.text)
             summary = f"\u9875\u9762\u6587\u672c\u53d1\u751f\u53d8\u5316\uff1a\u65b0\u589e {added} \u5904\uff0c\u5220\u9664 {removed} \u5904"
             event_id = insert_row(
@@ -582,8 +617,19 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
                 event={"id": event_id, "change_type": "text_change", "summary": summary, "source_url": source_data["url"], "diff": diff_items},
                 product=None,
             )
-            return {"snapshot_id": snapshot_id, "changed": True, "summary": summary}
-        return {"snapshot_id": snapshot_id, "changed": False}
+            return {
+                "snapshot_id": snapshot_id,
+                "changed": True,
+                "summary": summary,
+                "screenshot_saved": screenshot_saved,
+                "visual_change_ratio": visual_ratio,
+            }
+        return {
+            "snapshot_id": snapshot_id,
+            "changed": False,
+            "screenshot_saved": screenshot_saved,
+            "visual_change_ratio": visual_ratio,
+        }
 
 
 async def scan_source(

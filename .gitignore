@@ -17,3 +17,4 @@ tools/caddy/
 .codex/
 .playwright-cli/
 output/
+.worktrees/

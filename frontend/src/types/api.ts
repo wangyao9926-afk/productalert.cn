@@ -54,6 +54,7 @@ export type ScanLog = {
   started_at?: string | null;
   finished_at?: string | null;
   duration_ms?: number | null;
+  message?: string | null;
   error_message?: string | null;
 };
 

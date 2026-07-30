@@ -72,6 +72,12 @@ def run_smoke_test() -> dict:
             raise RuntimeError("background worker health did not match runtime settings")
         if health_data.get("notification_worker_enabled") is not expected_notification_worker:
             raise RuntimeError("notification worker health did not match runtime settings")
+        operations_summary = client.get("/api/operations/summary", headers=headers)
+        assert_status(operations_summary, 200, "operations summary")
+        operations_summary_data = operations_summary.json()
+        for key in ("scans", "queue", "notifications", "failure_categories"):
+            if key not in operations_summary_data:
+                raise RuntimeError(f"operations summary did not include {key}: {operations_summary_data}")
 
         site = client.post(
             "/api/sites",

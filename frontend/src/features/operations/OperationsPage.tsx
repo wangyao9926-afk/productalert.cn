@@ -13,7 +13,7 @@ import {
   Wifi,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { loadOperationsContext, type OperationsContext, type ScanJob } from "../../api/operations";
+import { loadOperationsContext, type OperationsContext, type OperationsSummary } from "../../api/operations";
 import { loadOverview } from "../../api/overview";
 import type { ScanLog, SystemHealth } from "../../types/api";
 
@@ -35,17 +35,29 @@ function statusText(status?: string | null) {
   return status || "未知";
 }
 
-function scanReliability(scanLogs: ScanLog[]) {
-  if (!scanLogs.length) return 100;
-  const success = scanLogs.filter((log) => log.status === "success").length;
-  return Math.round((success / scanLogs.length) * 100);
+function summaryFromLogs(scanLogs: ScanLog[]): OperationsSummary {
+  const successful = scanLogs.filter((log) => log.status === "success").length;
+  const failedLogs = scanLogs.filter((log) => log.status !== "success");
+  return {
+    scans: {
+      total: scanLogs.length,
+      successful,
+      failed: failedLogs.length,
+      success_rate: scanLogs.length ? successful / scanLogs.length : null,
+      average_duration_ms: null,
+    },
+    queue: { queued: 0, running: 0, failed: 0 },
+    notifications: { pending: 0, sending: 0, failed: 0 },
+    failure_categories: [],
+  };
 }
 
-function queueStatus(scanJobs: ScanJob[]) {
-  const queued = scanJobs.filter((job) => job.status === "queued" || job.status === "pending").length;
-  const running = scanJobs.filter((job) => job.status === "running" || job.status === "processing").length;
-  const failed = scanJobs.filter((job) => job.status === "failed" || job.error_message).length;
-  return { queued, running, failed };
+function queueSummary(scanJobs: Array<{ status?: string | null }>) {
+  return {
+    queued: scanJobs.filter((job) => job.status === "queued" || job.status === "pending").length,
+    running: scanJobs.filter((job) => job.status === "running" || job.status === "processing").length,
+    failed: scanJobs.filter((job) => job.status === "failed" || job.status === "error").length,
+  };
 }
 
 function workerStatus(health: SystemHealth) {
@@ -66,21 +78,24 @@ function redisStatus(health: SystemHealth) {
 }
 
 function demoContextFromOverview(health: SystemHealth, logs: ScanLog[]): OperationsContext {
+  const scanJobs = logs.slice(0, 6).map((log, index) => ({
+    id: index + 1,
+    site_id: log.site_id,
+    site_name: log.site_name,
+    job_type: "site_scan",
+    trigger_type: index % 2 === 0 ? "scheduled" : "manual",
+    status: log.status === "success" ? "completed" : "failed",
+    queued_at: log.started_at,
+    started_at: log.started_at,
+    finished_at: log.finished_at,
+    error_message: log.error_message,
+  }));
+  const summary = { ...summaryFromLogs(logs), queue: queueSummary(scanJobs) };
   return {
     health,
     scanLogs: logs,
-    scanJobs: logs.slice(0, 6).map((log, index) => ({
-      id: index + 1,
-      site_id: log.site_id,
-      site_name: log.site_name,
-      job_type: "site_scan",
-      trigger_type: index % 2 === 0 ? "scheduled" : "manual",
-      status: log.status === "success" ? "completed" : "failed",
-      queued_at: log.started_at,
-      started_at: log.started_at,
-      finished_at: log.finished_at,
-      error_message: log.error_message,
-    })),
+    summary,
+    scanJobs,
   };
 }
 
@@ -113,17 +128,19 @@ export function OperationsPage() {
     const systemHealth = context?.health || { ok: false };
     const scanJobs = context?.scanJobs || [];
     const scanLogs = context?.scanLogs || [];
-    const queue = queueStatus(scanJobs);
+    const summary = context?.summary || summaryFromLogs(scanLogs);
     return {
       systemHealth,
       scanJobs,
       scanLogs,
-      queueStatus: queue,
+      queueStatus: summary.queue,
+      notificationStatus: summary.notifications,
+      observability: summary,
       workerStatus: workerStatus(systemHealth),
       notificationWorkerStatus: notificationWorkerStatus(systemHealth),
       databaseStatus: databaseStatus(systemHealth),
       redisStatus: redisStatus(systemHealth),
-      scanReliability: scanReliability(scanLogs),
+      scanReliability: summary.scans.success_rate === null ? 100 : Math.round(summary.scans.success_rate * 100),
       failedLogs: scanLogs.filter((log) => log.status && log.status !== "success"),
     };
   }, [context]);
@@ -152,7 +169,8 @@ export function OperationsPage() {
       <section className="operations-summary-grid" aria-label="运维摘要">
         <OpsMetric label="系统健康" value={ops.systemHealth.ok ? "正常" : "异常"} detail="systemHealth" icon={<ShieldCheck size={18} />} tone="green" />
         <OpsMetric label="队列积压" value={ops.queueStatus.queued} detail={`运行中 ${ops.queueStatus.running} / 失败 ${ops.queueStatus.failed}`} icon={<ListChecks size={18} />} tone="blue" />
-        <OpsMetric label="抓取成功率" value={`${ops.scanReliability}%`} detail={`${ops.scanLogs.length} 条扫描日志`} icon={<Activity size={18} />} tone="orange" />
+        <OpsMetric label="抓取成功率" value={`${ops.scanReliability}%`} detail={`${ops.observability.scans.total} 条扫描 / 平均 ${ops.observability.scans.average_duration_ms ?? "-"}ms`} icon={<Activity size={18} />} tone="orange" />
+        <OpsMetric label="通知失败" value={ops.notificationStatus.failed} detail={`待发送 ${ops.notificationStatus.pending} / 发送中 ${ops.notificationStatus.sending}`} icon={<AlertTriangle size={18} />} tone="purple" />
         <OpsMetric label="数据库" value={ops.databaseStatus} detail="databaseStatus" icon={<Database size={18} />} tone="purple" />
       </section>
 
@@ -183,12 +201,13 @@ export function OperationsPage() {
             <span className="tag">{ops.failedLogs.length} 条</span>
           </div>
           <div className="ops-failure-list">
+            {ops.observability.failure_categories.length ? <div className="failure-category-list">{ops.observability.failure_categories.map((item) => <span className="tag" key={item.category}>{item.category} {item.count}</span>)}</div> : null}
             {ops.failedLogs.length ? ops.failedLogs.slice(0, 6).map((log) => (
               <article className="ops-failure-row" key={log.id}>
                 <AlertTriangle size={16} />
                 <div>
                   <strong>{log.site_name || `站点 #${log.site_id}`}</strong>
-                  <span>{log.error_message || statusText(log.status)}</span>
+                  <span>{log.error_message || log.message || statusText(log.status)}</span>
                 </div>
                 <em>{relativeTime(log.started_at)}</em>
               </article>

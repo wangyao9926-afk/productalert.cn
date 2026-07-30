@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import json
+from datetime import datetime
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Response
@@ -154,6 +155,109 @@ async def system_health(user: dict = CurrentUser) -> dict:
 @app.get("/api/system/ping")
 async def system_ping() -> dict:
     return {"ok": True}
+
+
+def parse_observability_time(value: str | datetime | None) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def classify_scan_failure(message: str | None) -> str:
+    text = (message or "").lower()
+    if "403" in text or "forbidden" in text or "access denied" in text or "blocked" in text:
+        return "access_denied"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "render" in text or "playwright" in text:
+        return "render_failed"
+    if "selector" in text or "field missing" in text:
+        return "field_missing"
+    if "404" in text or "not found" in text:
+        return "not_found"
+    return "unknown"
+
+
+@app.get("/api/operations/summary")
+async def operations_summary(user: dict = CurrentUser) -> dict:
+    with get_db() as db:
+        scan_rows = fetchall(
+            db,
+            """
+            SELECT scan_logs.status, scan_logs.started_at, scan_logs.finished_at, scan_logs.message
+            FROM scan_logs
+            JOIN sites ON sites.id = scan_logs.site_id
+            WHERE sites.user_id = ?
+            ORDER BY scan_logs.started_at DESC, scan_logs.id DESC
+            LIMIT 100
+            """,
+            (user["id"],),
+        )
+        job_rows = fetchall(
+            db,
+            """
+            SELECT scan_jobs.status
+            FROM scan_jobs
+            JOIN sites ON sites.id = scan_jobs.site_id
+            WHERE sites.user_id = ?
+            """,
+            (user["id"],),
+        )
+        notification_rows = fetchall(
+            db,
+            """
+            SELECT notification_outbox.status
+            FROM notification_outbox
+            JOIN sites ON sites.id = notification_outbox.site_id
+            WHERE sites.user_id = ?
+            """,
+            (user["id"],),
+        )
+
+    scans = [row_to_dict(row) for row in scan_rows]
+    successful = sum(1 for row in scans if row["status"] == "success")
+    failed_rows = [row for row in scans if row["status"] != "success"]
+    durations = []
+    for row in scans:
+        started_at = parse_observability_time(row.get("started_at"))
+        finished_at = parse_observability_time(row.get("finished_at"))
+        if started_at and finished_at:
+            durations.append(round((finished_at - started_at).total_seconds() * 1000))
+    categories: dict[str, int] = {}
+    for row in failed_rows:
+        category = classify_scan_failure(row.get("message"))
+        categories[category] = categories.get(category, 0) + 1
+
+    job_statuses = [row_to_dict(row).get("status") for row in job_rows]
+    notification_statuses = [row_to_dict(row).get("status") for row in notification_rows]
+    return {
+        "scans": {
+            "total": len(scans),
+            "successful": successful,
+            "failed": len(failed_rows),
+            "success_rate": round(successful / len(scans), 4) if scans else None,
+            "average_duration_ms": round(sum(durations) / len(durations)) if durations else None,
+        },
+        "queue": {
+            "queued": sum(1 for status in job_statuses if status == "queued"),
+            "running": sum(1 for status in job_statuses if status == "running"),
+            "failed": sum(1 for status in job_statuses if status == "failed"),
+        },
+        "notifications": {
+            "pending": sum(1 for status in notification_statuses if status == "pending"),
+            "sending": sum(1 for status in notification_statuses if status == "sending"),
+            "failed": sum(1 for status in notification_statuses if status == "failed"),
+        },
+        "failure_categories": [
+            {"category": category, "count": count}
+            for category, count in sorted(categories.items(), key=lambda item: (-item[1], item[0]))
+        ],
+    }
 
 
 def load_sources_by_site() -> dict[int, list[dict]]:

@@ -391,6 +391,36 @@ def record_new_product_event(db, saved: dict, source_data: dict, source_id: int)
     )
 
 
+def sync_product_variants(db, product_id: int, product) -> None:
+    existing_rows = fetchall(db, "SELECT * FROM product_variants WHERE product_id = ?", (product_id,))
+    existing_by_external_id = {row["external_id"]: row for row in existing_rows}
+    for variant in product.variants:
+        values = {
+            "sku": variant.sku,
+            "title": variant.title,
+            "option_values": " / ".join(variant.option_values),
+            "price": variant.price,
+            "price_amount": variant.price_amount,
+            "compare_at_price": variant.compare_at_price,
+            "availability": variant.availability,
+            "last_seen_at": now_iso(),
+        }
+        existing = existing_by_external_id.get(variant.external_id)
+        if existing:
+            update_by_id(db, "product_variants", existing["id"], values)
+            continue
+        insert_row(
+            db,
+            "product_variants",
+            {
+                "product_id": product_id,
+                "external_id": variant.external_id,
+                **values,
+                "first_seen_at": now_iso(),
+            },
+        )
+
+
 async def extract_and_store_product(
     candidate,
     source_data: dict,
@@ -448,6 +478,7 @@ async def extract_and_store_product(
                     "raw_text": product.raw_text,
                 },
             )
+            sync_product_variants(db, exists["id"], product)
             return None
         product_id = insert_row(
             db,
@@ -477,6 +508,7 @@ async def extract_and_store_product(
                 "raw_text": product.raw_text,
             },
         )
+        sync_product_variants(db, product_id, product)
 
     saved = {
         "id": product_id,

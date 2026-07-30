@@ -649,6 +649,33 @@ async def update_product_inbox_status(product_id: int, payload: InboxStatusUpdat
     return row_to_dict(product)
 
 
+@app.get("/api/products/{product_id}/variants")
+async def list_product_variants(product_id: int, user: dict = CurrentUser) -> list[dict]:
+    with get_db() as db:
+        product = fetchone(
+            db,
+            """
+            SELECT products.id
+            FROM products
+            JOIN sites ON sites.id = products.site_id
+            WHERE products.id = ? AND sites.user_id = ?
+            """,
+            (product_id, user["id"]),
+        )
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        rows = fetchall(
+            db,
+            """
+            SELECT * FROM product_variants
+            WHERE product_id = ?
+            ORDER BY availability = 'in_stock' DESC, price_amount ASC, id ASC
+            """,
+            (product_id,),
+        )
+    return [row_to_dict(row) for row in rows]
+
+
 @app.patch("/api/change-events/{event_id}/inbox-status")
 async def update_change_event_inbox_status(event_id: int, payload: InboxStatusUpdate, user: dict = CurrentUser) -> dict:
     with get_db() as db:

@@ -61,6 +61,18 @@ class ProductCandidate:
 
 
 @dataclass
+class ExtractedVariant:
+    external_id: str
+    sku: str | None
+    title: str | None
+    option_values: list[str]
+    price: str | None
+    price_amount: float | None
+    compare_at_price: float | None
+    availability: str | None
+
+
+@dataclass
 class ExtractedProduct:
     url: str
     title: str
@@ -72,6 +84,7 @@ class ExtractedProduct:
     compare_at_price: float | None
     availability: str | None
     variant_count: int | None
+    variants: list[ExtractedVariant]
     features: list[str]
     extraction_source: str
     confidence_score: float
@@ -772,6 +785,35 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
     description = raw_text[:1000]
 
     variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+    option_names = [
+        clean_text(str(option.get("name")))
+        for option in product.get("options", [])
+        if isinstance(option, dict) and clean_text(str(option.get("name") or ""))
+    ]
+    extracted_variants: list[ExtractedVariant] = []
+    for index, variant in enumerate(variants):
+        if not isinstance(variant, dict):
+            continue
+        raw_external_id = variant.get("id") or variant.get("sku") or variant.get("title") or str(index + 1)
+        option_values = [
+            f"{option_name}: {clean_text(str(variant.get(f'option{position}') or ''))}"
+            for position, option_name in enumerate(option_names, start=1)
+            if clean_text(str(variant.get(f"option{position}") or ""))
+        ]
+        price_amount = parse_money(variant.get("price"))
+        compare_at_price = parse_money(variant.get("compare_at_price"))
+        extracted_variants.append(
+            ExtractedVariant(
+                external_id=str(raw_external_id),
+                sku=clean_text(str(variant.get("sku") or "")) or None,
+                title=clean_text(str(variant.get("title") or "")) or None,
+                option_values=option_values,
+                price=format_money(price_amount) if price_amount is not None else None,
+                price_amount=price_amount,
+                compare_at_price=compare_at_price,
+                availability="in_stock" if variant.get("available") is True else ("out_of_stock" if variant.get("available") is False else None),
+            )
+        )
     prices = [
         parsed
         for parsed in (parse_money(variant.get("price")) for variant in variants if isinstance(variant, dict))
@@ -838,6 +880,7 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
         compare_at_price=compare_at_price,
         availability=availability,
         variant_count=variant_count,
+        variants=extracted_variants,
         features=features,
         extraction_source="shopify_api",
         confidence_score=confidence_score,
@@ -910,6 +953,7 @@ def product_from_html(url: str, html: str, title_hint: str | None = None, render
         compare_at_price=structured_price.get("compare_at_price"),
         availability=structured_price.get("availability"),
         variant_count=structured_price.get("variant_count"),
+        variants=[],
         features=features,
         extraction_source=extraction_source,
         confidence_score=confidence_score,

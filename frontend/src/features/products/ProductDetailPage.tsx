@@ -29,6 +29,11 @@ function availabilityText(value?: string | null) {
   return value;
 }
 
+function variantPrice(value?: number | null, fallback?: string | null, currency?: string | null) {
+  if (value !== null && value !== undefined) return `${currency || "CNY"} ${value}`;
+  return fallback || "待采集";
+}
+
 function relativeTime(value?: string | null) {
   if (!value) return "刚刚";
   const minutes = Math.max(1, Math.round((Date.now() - new Date(value).getTime()) / 60000));
@@ -135,6 +140,34 @@ export function ProductDetailPage() {
           </div>
         </section>
       </div>
+
+      <section className="panel related-events-panel">
+        <div className="panel-heading">
+          <div>
+            <div className="panel-kicker">VARIANTS</div>
+            <h2>颜色 / 尺码变体</h2>
+          </div>
+          <span className="monitor-count">{data.variants.length} 条</span>
+        </div>
+        {data.variants.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>变体</th><th>SKU</th><th>选项</th><th>价格</th><th>库存</th></tr></thead>
+              <tbody>{data.variants.map((variant) => (
+                <tr key={variant.id}>
+                  <td><strong>{variant.title || variant.external_id}</strong><span className="table-sub">#{variant.external_id}</span></td>
+                  <td>{variant.sku || "未采集"}</td>
+                  <td>{variant.option_values || "未采集"}</td>
+                  <td>{variantPrice(variant.price_amount, variant.price, product.currency)}<span className="table-sub">{variant.compare_at_price ? `划线价 ${variant.compare_at_price}` : ""}</span></td>
+                  <td><span className="tag">{availabilityText(variant.availability)}</span></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state compact"><div className="empty-icon"><Boxes size={18} /></div><p>该商品暂无可识别的变体数据</p></div>
+        )}
+      </section>
 
       <section className="panel related-events-panel">
         <div className="panel-heading">

@@ -13,6 +13,9 @@ class ProductVariantsUiTests(unittest.TestCase):
         self.assertIn("variants: ProductVariant[]", api_source)
         self.assertIn("data.variants", page_source)
         self.assertIn("VARIANTS", page_source)
+        detail_source = Path("frontend/src/features/changes/ChangeDetailPage.tsx").read_text(encoding="utf-8")
+        self.assertIn("variant_price", detail_source)
+        self.assertIn("变体价格", detail_source)
 
 
 if __name__ == "__main__":

@@ -120,6 +120,46 @@ class VariantPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 with get_db() as db:
                     execute_sql(db, "DELETE FROM sites WHERE id = ?", (site_id,))
 
+    async def test_variant_price_and_stock_changes_create_events_when_product_totals_do_not_change(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        site_id: int | None = None
+        url = f"https://variant-events-{marker}.example.com/products/trail-pack"
+        with get_db() as db:
+            site_id = insert_row(db, "sites", {"user_id": 1, "name": "Variant event site", "url": f"https://variant-events-{marker}.example.com", "scan_interval_minutes": 60, "notification_events": "[\"product_new\"]"})
+            source_id = insert_row(db, "monitor_sources", {"site_id": site_id, "source_type": "listing_page", "url": f"https://variant-events-{marker}.example.com/collections/new", "scan_interval_minutes": 60})
+            insert_row(db, "source_snapshots", {"source_id": source_id, "url": url, "content_hash": "baseline-content", "text_hash": "baseline-text"})
+        source_data = {"id": source_id, "site_id": site_id, "site_name": "Variant event site", "url": url}
+        baseline = ProductCandidate(
+            url=url,
+            payload={"kind": "shopify_product", "product": {"title": "Trail Pack", "variants": [
+                {"id": 101, "sku": "TP-RED", "title": "Red", "price": "39.00", "available": True},
+                {"id": 102, "sku": "TP-BLU", "title": "Blue", "price": "45.00", "available": False},
+                {"id": 103, "sku": "TP-GRN", "title": "Green", "price": "60.00", "available": False},
+            ]}},
+        )
+        changed = ProductCandidate(
+            url=url,
+            payload={"kind": "shopify_product", "product": {"title": "Trail Pack", "variants": [
+                {"id": 101, "sku": "TP-RED", "title": "Red", "price": "39.00", "available": True},
+                {"id": 102, "sku": "TP-BLU", "title": "Blue", "price": "46.00", "available": True},
+                {"id": 103, "sku": "TP-GRN", "title": "Green", "price": "60.00", "available": False},
+            ]}},
+        )
+        try:
+            await extract_and_store_product(baseline, source_data, source_id, discovery_status="baseline", notify=False, record_changes=False)
+            await extract_and_store_product(changed, source_data, source_id, discovery_status="known", notify=False, record_changes=True)
+            with get_db() as db:
+                events = [row_to_dict(row) for row in fetchall(db, "SELECT * FROM change_events WHERE site_id = ? ORDER BY id", (site_id,))]
+            self.assertEqual([event["change_type"] for event in events], ["price_change", "availability_change"])
+            self.assertEqual([event["diff"][0]["variant_external_id"] for event in events], ["102", "102"])
+            self.assertEqual(events[0]["diff"][0]["field"], "variant_price")
+            self.assertEqual(events[1]["diff"][0]["field"], "variant_availability")
+        finally:
+            if site_id is not None:
+                with get_db() as db:
+                    execute_sql(db, "DELETE FROM sites WHERE id = ?", (site_id,))
+
 
 class VariantApiTests(unittest.TestCase):
     def test_only_the_product_owner_can_list_variant_records(self) -> None:

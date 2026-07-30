@@ -94,11 +94,21 @@ function severityFor(event?: ChangeEvent | ChangeDetail) {
   return "低";
 }
 
+function diffFieldLabel(item: Record<string, unknown>, index: number) {
+  const labels: Record<string, string> = {
+    variant_price: "变体价格",
+    variant_availability: "变体库存",
+  };
+  const base = String(item.label || labels[String(item.field || "")] || item.field || `字段 ${index + 1}`);
+  const variant = item.variant_sku || item.variant_title || item.variant_external_id;
+  return variant ? `${base} · ${variant}` : base;
+}
+
 function buildFieldDiff(event: ChangeEvent | ChangeDetail): FieldDiff[] {
   const realDiff = (event as ChangeDetail).diff;
   if (Array.isArray(realDiff) && realDiff.length > 0) {
     return realDiff.map((item, index) => ({
-      field: item.label || item.field || `字段 ${index + 1}`,
+      field: diffFieldLabel(item, index),
       before: cleanValue(item.before ?? item.old),
       after: cleanValue(item.after ?? item.new),
       highlight: cleanValue(item.before ?? item.old) !== cleanValue(item.after ?? item.new),

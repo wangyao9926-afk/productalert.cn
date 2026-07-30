@@ -391,9 +391,17 @@ def record_new_product_event(db, saved: dict, source_data: dict, source_id: int)
     )
 
 
-def sync_product_variants(db, product_id: int, product) -> None:
+def sync_product_variants(
+    db,
+    product_id: int,
+    product,
+    source_data: dict | None = None,
+    source_id: int | None = None,
+    record_changes: bool = False,
+) -> None:
     existing_rows = fetchall(db, "SELECT * FROM product_variants WHERE product_id = ?", (product_id,))
     existing_by_external_id = {row["external_id"]: row for row in existing_rows}
+    snapshot_id = latest_snapshot_id(db, source_id) if record_changes and source_id else None
     for variant in product.variants:
         values = {
             "sku": variant.sku,
@@ -407,6 +415,58 @@ def sync_product_variants(db, product_id: int, product) -> None:
         }
         existing = existing_by_external_id.get(variant.external_id)
         if existing:
+            if snapshot_id and source_data:
+                variant_label = variant.sku or variant.title or variant.external_id
+                old_price_key = (existing["price_amount"], existing["price"], existing["compare_at_price"])
+                new_price_key = (variant.price_amount, variant.price, variant.compare_at_price)
+                if old_price_key != new_price_key:
+                    diff = event_diff("variant_price", existing["price"] or existing["price_amount"], variant.price or variant.price_amount)
+                    diff[0].update({"variant_external_id": variant.external_id, "variant_sku": variant.sku, "variant_title": variant.title})
+                    summary = f"变体价格变化：{product.title} · {variant_label}"
+                    event_id = insert_product_change_event(
+                        db,
+                        site_id=source_data["site_id"],
+                        source_id=source_id,
+                        product_id=product_id,
+                        snapshot_id=snapshot_id,
+                        change_type="price_change",
+                        severity="high",
+                        summary=summary,
+                        diff=diff,
+                    )
+                    enqueue_event_notification_if_enabled(
+                        db,
+                        source_data,
+                        event_id=event_id,
+                        event_type="price_change",
+                        product_id=product_id,
+                        event={"id": event_id, "change_type": "price_change", "summary": summary, "diff": diff},
+                        product={"id": product_id, "title": product.title, "url": product.url, "price": variant.price},
+                    )
+                if (existing["availability"] or "") != (variant.availability or ""):
+                    diff = event_diff("variant_availability", existing["availability"], variant.availability)
+                    diff[0].update({"variant_external_id": variant.external_id, "variant_sku": variant.sku, "variant_title": variant.title})
+                    summary = f"变体库存变化：{product.title} · {variant_label}"
+                    event_id = insert_product_change_event(
+                        db,
+                        site_id=source_data["site_id"],
+                        source_id=source_id,
+                        product_id=product_id,
+                        snapshot_id=snapshot_id,
+                        change_type="availability_change",
+                        severity="high",
+                        summary=summary,
+                        diff=diff,
+                    )
+                    enqueue_event_notification_if_enabled(
+                        db,
+                        source_data,
+                        event_id=event_id,
+                        event_type="availability_change",
+                        product_id=product_id,
+                        event={"id": event_id, "change_type": "availability_change", "summary": summary, "diff": diff},
+                        product={"id": product_id, "title": product.title, "url": product.url, "availability": variant.availability},
+                    )
             update_by_id(db, "product_variants", existing["id"], values)
             continue
         insert_row(
@@ -478,7 +538,7 @@ async def extract_and_store_product(
                     "raw_text": product.raw_text,
                 },
             )
-            sync_product_variants(db, exists["id"], product)
+            sync_product_variants(db, exists["id"], product, event_source_data, source_id, record_changes)
             return None
         product_id = insert_row(
             db,

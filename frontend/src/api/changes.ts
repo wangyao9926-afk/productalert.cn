@@ -1,4 +1,4 @@
-import { getJson } from "./client";
+import { getJson, sendJson } from "./client";
 import type { ChangeEvent, ScanLog } from "../types/api";
 
 export type SourceSnapshot = {
@@ -71,4 +71,17 @@ export function loadChangeEvents(filters: ChangeEventFilters = {}): Promise<Chan
 
 export function loadChangeDetail(id: number | string): Promise<ChangeDetail> {
   return getJson<ChangeDetail>(`/api/change-events/${id}`);
+}
+
+export type EventSuppressionRule = {
+  id: number;
+  site_id: number;
+  source_id: number;
+  change_type: string;
+  reason?: string | null;
+  enabled: boolean;
+};
+
+export function suppressSimilarChangeEvents(eventId: number | string, reason: string): Promise<EventSuppressionRule> {
+  return sendJson<EventSuppressionRule>(`/api/change-events/${eventId}/suppress-similar`, { reason });
 }

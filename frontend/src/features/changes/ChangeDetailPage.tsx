@@ -14,7 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { loadChangeDetail, type ChangeDetail } from "../../api/changes";
+import { loadChangeDetail, suppressSimilarChangeEvents, type ChangeDetail } from "../../api/changes";
 import { ApiError } from "../../api/client";
 import { updateChangeEventInboxStatus, type BackendInboxStatus } from "../../api/inbox";
 import { loadOverview, type OverviewData } from "../../api/overview";
@@ -194,6 +194,8 @@ export function ChangeDetailPage() {
   const [loading, setLoading] = useState(true);
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus>("pending");
   const [actionStatus, setActionStatus] = useState<ReviewStatus | null>(null);
+  const [suppressing, setSuppressing] = useState(false);
+  const [suppressed, setSuppressed] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const refresh = () => {
@@ -202,6 +204,7 @@ export function ChangeDetailPage() {
     setDetailMode("fallback");
     setDetailMessage("详情 API 不可用，当前显示派生详情");
     setActionMessage(null);
+    setSuppressed(false);
 
     const overviewRequest = loadOverview().then(setData);
     const detailRequest = id
@@ -284,6 +287,25 @@ export function ChangeDetailPage() {
     }
   };
 
+  const handleSuppressSimilar = async () => {
+    if (!detail) return;
+    setSuppressing(true);
+    setActionMessage(null);
+    try {
+      await suppressSimilarChangeEvents(detail.id, `忽略此来源的 ${detail.change_type || "同类"} 变化`);
+      setSuppressed(true);
+      setActionMessage({ type: "success", text: "已忽略此来源后续同类变化；页面快照和商品数据仍会继续采集。" });
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setActionMessage({ type: "error", text: "请先登录后再设置忽略规则。" });
+        return;
+      }
+      setActionMessage({ type: "error", text: "忽略规则创建失败，当前监控不会受到影响。" });
+    } finally {
+      setSuppressing(false);
+    }
+  };
+
   if (loading || !event) {
     return <div className="page-loading"><RefreshCw size={18} className="spin" /> 正在加载变化详情...</div>;
   }
@@ -301,6 +323,11 @@ export function ChangeDetailPage() {
           </div>
         </div>
         <div className="page-actions">
+          {detailMode === "real" ? (
+            <button className="button button-secondary" type="button" disabled={suppressing || suppressed} onClick={handleSuppressSimilar}>
+              <XCircle size={16} /> {suppressed ? "已忽略同类变化" : suppressing ? "设置中..." : "忽略此来源同类变化"}
+            </button>
+          ) : null}
           <button className="button button-secondary" type="button" disabled={actionStatus !== null} onClick={() => handleReviewStatus("false-positive")}>
             <XCircle size={16} /> {actionStatus === "false-positive" ? "同步中..." : "标记误报"}
           </button>

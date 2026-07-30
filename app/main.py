@@ -111,6 +111,10 @@ class InboxStatusUpdate(BaseModel):
     false_positive_reason: str | None = Field(default=None, max_length=500)
 
 
+class EventSuppressionCreate(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class UserCredentials(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=8, max_length=128)
@@ -714,6 +718,63 @@ async def update_change_event_inbox_status(event_id: int, payload: InboxStatusUp
     if not event:
         raise HTTPException(status_code=404, detail="变化事件不存在")
     return row_to_dict(event)
+
+
+@app.get("/api/event-suppression-rules")
+async def list_event_suppression_rules(user: dict = CurrentUser) -> list[dict]:
+    with get_db() as db:
+        rows = fetchall(
+            db,
+            """
+            SELECT event_suppression_rules.*, sites.name AS site_name, monitor_sources.url AS source_url
+            FROM event_suppression_rules
+            JOIN sites ON sites.id = event_suppression_rules.site_id
+            JOIN monitor_sources ON monitor_sources.id = event_suppression_rules.source_id
+            WHERE sites.user_id = ?
+            ORDER BY event_suppression_rules.created_at DESC, event_suppression_rules.id DESC
+            """,
+            (user["id"],),
+        )
+    return [row_to_dict(row) for row in rows]
+
+
+@app.post("/api/change-events/{event_id}/suppress-similar")
+async def suppress_similar_change_events(event_id: int, payload: EventSuppressionCreate, user: dict = CurrentUser) -> dict:
+    with get_db() as db:
+        event = fetchone(
+            db,
+            """
+            SELECT change_events.id, change_events.site_id, change_events.source_id, change_events.change_type
+            FROM change_events
+            JOIN sites ON sites.id = change_events.site_id
+            WHERE change_events.id = ? AND sites.user_id = ?
+            """,
+            (event_id, user["id"]),
+        )
+        if not event:
+            raise HTTPException(status_code=404, detail="Change event not found")
+        existing = fetchone(
+            db,
+            "SELECT * FROM event_suppression_rules WHERE source_id = ? AND change_type = ?",
+            (event["source_id"], event["change_type"]),
+        )
+        if existing:
+            update_by_id(db, "event_suppression_rules", existing["id"], {"reason": payload.reason, "enabled": True})
+            rule = fetchone(db, "SELECT * FROM event_suppression_rules WHERE id = ?", (existing["id"],))
+        else:
+            rule_id = insert_row(
+                db,
+                "event_suppression_rules",
+                {
+                    "site_id": event["site_id"],
+                    "source_id": event["source_id"],
+                    "change_type": event["change_type"],
+                    "reason": payload.reason,
+                    "enabled": True,
+                },
+            )
+            rule = fetchone(db, "SELECT * FROM event_suppression_rules WHERE id = ?", (rule_id,))
+    return row_to_dict(rule)
 
 
 @app.post("/api/sites/{site_id}/scan")

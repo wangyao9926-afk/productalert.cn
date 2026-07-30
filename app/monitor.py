@@ -212,18 +212,33 @@ def event_diff(field: str, before, after) -> list[dict]:
     return [{"type": "changed", "field": field, "before": before, "after": after}]
 
 
+def is_event_suppressed(db, source_id: int, change_type: str) -> bool:
+    row = fetchone(
+        db,
+        """
+        SELECT enabled FROM event_suppression_rules
+        WHERE source_id = ? AND change_type = ?
+        """,
+        (source_id, change_type),
+    )
+    return bool(row and row["enabled"])
+
+
 def insert_product_change_event(
     db,
     *,
     site_id: int,
     source_id: int,
-    product_id: int,
+    product_id: int | None,
     snapshot_id: int,
     change_type: str,
     severity: str,
     summary: str,
     diff: list[dict],
-) -> int:
+    snapshot_before_id: int | None = None,
+) -> int | None:
+    if is_event_suppressed(db, source_id, change_type):
+        return None
     return insert_row(
         db,
         "change_events",
@@ -231,6 +246,7 @@ def insert_product_change_event(
             "site_id": site_id,
             "source_id": source_id,
             "product_id": product_id,
+            "snapshot_before_id": snapshot_before_id,
             "snapshot_after_id": snapshot_id,
             "change_type": change_type,
             "severity": severity,
@@ -244,12 +260,14 @@ def enqueue_event_notification_if_enabled(
     db,
     site: dict,
     *,
-    event_id: int,
+    event_id: int | None,
     event_type: str,
     product_id: int | None,
     event: dict,
     product: dict | None,
 ) -> None:
+    if event_id is None:
+        return
     if site.get("_notify_enabled") is False:
         return
     if not should_notify_event(site, event_type):
@@ -764,19 +782,17 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
                 change_type = "visual_change"
                 severity = "normal"
                 summary = f"\u9875\u9762\u89c6\u89c9\u53d1\u751f\u53d8\u5316\uff1a\u50cf\u7d20\u53d8\u5316 {(visual_ratio or 0) * 100:.1f}%"
-            event_id = insert_row(
+            event_id = insert_product_change_event(
                 db,
-                "change_events",
-                {
-                    "site_id": source_data["site_id"],
-                    "source_id": source_data["id"],
-                    "snapshot_before_id": previous["id"] if text_changed else previous_visual["id"],
-                    "snapshot_after_id": snapshot_id,
-                    "change_type": change_type,
-                    "severity": severity,
-                    "summary": summary,
-                    "diff": json_dumps(diff_items),
-                },
+                site_id=source_data["site_id"],
+                source_id=source_data["id"],
+                product_id=None,
+                snapshot_id=snapshot_id,
+                snapshot_before_id=previous["id"] if text_changed else previous_visual["id"],
+                change_type=change_type,
+                severity=severity,
+                summary=summary,
+                diff=diff_items,
             )
             if text_changed:
                 enqueue_event_notification_if_enabled(
@@ -791,6 +807,7 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
             return {
                 "snapshot_id": snapshot_id,
                 "changed": True,
+                "suppressed": event_id is None,
                 "summary": summary,
                 "screenshot_saved": screenshot_saved,
                 "visual_change_ratio": visual_ratio,

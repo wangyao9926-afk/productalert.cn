@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../api/client";
-import { loadNotificationRules, loadNotifications, retryNotification, type NotificationRecord, type NotificationRule } from "../../api/notifications";
+import { createNotificationRule, loadNotificationRules, loadNotifications, retryNotification, type NotificationRecord, type NotificationRule } from "../../api/notifications";
 import { loadOverview, type OverviewData } from "../../api/overview";
 
 const channelCards = [
@@ -148,6 +148,10 @@ export function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [creatingRule, setCreatingRule] = useState(false);
+  const [newRuleName, setNewRuleName] = useState("新品与价格提醒");
+  const [newRuleChannel, setNewRuleChannel] = useState<"webhook" | "wecom" | "feishu">("wecom");
+  const [newRuleTarget, setNewRuleTarget] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const refresh = () => {
@@ -198,6 +202,33 @@ export function NotificationsPage() {
     }
   };
 
+  const handleCreateRule = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!newRuleTarget.trim()) {
+      setMessage({ type: "error", text: "请填写机器人 Webhook 地址。" });
+      return;
+    }
+    setCreatingRule(true);
+    setMessage(null);
+    try {
+      const created = await createNotificationRule({
+        name: newRuleName.trim() || "通知规则",
+        channel: newRuleChannel,
+        target_url: newRuleTarget.trim(),
+        event_types: ["product_new", "variant_new", "price_change", "availability_change"],
+        min_severity: "normal",
+        inbox_status: "unread",
+      });
+      setRules((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setNewRuleTarget("");
+      setMessage({ type: "success", text: "推送规则已创建，后续匹配事件将进入通知队列。" });
+    } catch (error) {
+      setMessage({ type: "error", text: error instanceof ApiError ? "规则创建失败，请检查机器人 Webhook 地址。" : "规则创建失败，请稍后重试。" });
+    } finally {
+      setCreatingRule(false);
+    }
+  };
+
   if (loading) {
     return <div className="page-loading"><RefreshCw size={18} className="spin" /> 正在同步通知中心...</div>;
   }
@@ -219,6 +250,19 @@ export function NotificationsPage() {
           <Link className="primary-button" to="/monitors/new"><BellRing size={17} /> 新建通知规则</Link>
         </div>
       </header>
+
+      <form className="panel" onSubmit={handleCreateRule}>
+        <div className="panel-heading">
+          <div><div className="panel-kicker">DELIVERY</div><h2>新建推送规则</h2></div>
+          <span className="tag">Webhook / 企业微信 / 飞书</span>
+        </div>
+        <div className="form-grid">
+          <label className="field-label">规则名称<input value={newRuleName} onChange={(event) => setNewRuleName(event.target.value)} /></label>
+          <label className="field-label">通道<select value={newRuleChannel} onChange={(event) => setNewRuleChannel(event.target.value as "webhook" | "wecom" | "feishu")}><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="webhook">通用 Webhook</option></select></label>
+          <label className="field-label">机器人 Webhook URL<input type="url" required placeholder="https://..." value={newRuleTarget} onChange={(event) => setNewRuleTarget(event.target.value)} /></label>
+          <button className="primary-button" type="submit" disabled={creatingRule}>{creatingRule ? "创建中..." : "启用推送"}</button>
+        </div>
+      </form>
 
       <section className="notification-summary-grid" aria-label="通知概览">
         <NotifyMetric label="待发送" value={summary.pending} detail="等待通知 worker 发送" icon={<Clock3 size={18} />} tone="orange" />

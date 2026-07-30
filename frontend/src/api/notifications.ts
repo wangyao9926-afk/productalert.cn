@@ -37,6 +37,15 @@ export type NotificationRule = {
   updated_at?: string | null;
 };
 
+export type CreateNotificationRuleInput = {
+  name: string;
+  channel: "webhook" | "wecom" | "feishu";
+  target_url: string;
+  event_types: string[];
+  min_severity?: "low" | "normal" | "high" | "critical";
+  inbox_status?: "unread" | "important" | "read" | "false_positive" | "follow_up";
+};
+
 export function loadNotifications(siteId?: number): Promise<NotificationRecord[]> {
   const query = siteId ? `?site_id=${siteId}` : "";
   return getJson<NotificationRecord[]>(`/api/notifications${query}`);
@@ -45,6 +54,10 @@ export function loadNotifications(siteId?: number): Promise<NotificationRecord[]
 export function loadNotificationRules(siteId?: number): Promise<NotificationRule[]> {
   const query = siteId ? `?site_id=${siteId}` : "";
   return getJson<NotificationRule[]>(`/api/notification-rules${query}`);
+}
+
+export function createNotificationRule(payload: CreateNotificationRuleInput): Promise<NotificationRule> {
+  return sendJson<NotificationRule>("/api/notification-rules", payload);
 }
 
 export function retryNotification(notificationId: number): Promise<NotificationRecord> {

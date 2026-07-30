@@ -6,6 +6,7 @@ import io
 import json
 from datetime import datetime
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import FileResponse
@@ -1029,6 +1030,14 @@ async def list_notification_rules(site_id: int | None = None, user: dict = Curre
 async def create_notification_rule(payload: NotificationRuleCreate, user: dict = CurrentUser) -> dict:
     if not payload.event_types:
         raise HTTPException(status_code=400, detail="通知规则至少需要一个事件类型")
+    if payload.channel == "email":
+        raise HTTPException(status_code=400, detail="邮件通道尚未接入真实发件服务，请使用 Webhook、企业微信或飞书")
+    if payload.channel not in {"webhook", "wecom", "feishu"}:
+        raise HTTPException(status_code=400, detail="不支持的通知通道")
+    parsed_target = urlparse(payload.target_url)
+    if parsed_target.scheme not in {"http", "https"} or not parsed_target.hostname:
+        raise HTTPException(status_code=400, detail="机器人地址必须是有效的 HTTP(S) URL")
+    target_url = payload.target_url
 
     with get_db() as db:
         if payload.site_id is not None:
@@ -1043,7 +1052,7 @@ async def create_notification_rule(payload: NotificationRuleCreate, user: dict =
                 "site_id": payload.site_id,
                 "name": payload.name,
                 "channel": payload.channel,
-                "target_url": payload.target_url,
+                "target_url": target_url,
                 "event_types": json_dumps(payload.event_types),
                 "min_severity": payload.min_severity,
                 "inbox_status": payload.inbox_status,

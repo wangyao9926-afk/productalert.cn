@@ -270,6 +270,54 @@ def enqueue_event_notification_if_enabled(
         return
     if site.get("_notify_enabled") is False:
         return
+    event_row = fetchone(db, "SELECT severity, inbox_status FROM change_events WHERE id = ?", (event_id,))
+    event_severity = str(event.get("severity") or (event_row["severity"] if event_row else "normal") or "normal")
+    event_inbox_status = str((event_row["inbox_status"] if event_row else "unread") or "unread")
+    severity_rank = {"low": 0, "normal": 1, "high": 2, "critical": 3}
+    matching_rules = fetchall(
+        db,
+        """
+        SELECT notification_rules.*
+        FROM notification_rules
+        JOIN sites ON sites.user_id = notification_rules.user_id
+        WHERE notification_rules.enabled = 1
+          AND sites.id = ?
+          AND (notification_rules.site_id = ? OR notification_rules.site_id IS NULL)
+        """,
+        (site["site_id"], site["site_id"]),
+    )
+    matched_rule = False
+    for raw_rule in matching_rules:
+        rule = row_to_dict(raw_rule)
+        if rule.get("channel") not in {"webhook", "wecom", "feishu"}:
+            continue
+        if event_type not in set(rule.get("event_types") or []):
+            continue
+        if severity_rank.get(event_severity, 1) < severity_rank.get(str(rule.get("min_severity") or "normal"), 1):
+            continue
+        if str(rule.get("inbox_status") or "unread") != event_inbox_status:
+            continue
+        safe_target_url = validate_public_http_url(rule["target_url"])
+        payload = change_event_payload(event, product)
+        insert_ignore(
+            db,
+            "notification_outbox",
+            ["site_id", "product_id", "event_id", "event_type", "channel", "target_url", "payload", "status", "next_attempt_at"],
+            (
+                site["site_id"],
+                product_id,
+                event_id,
+                event_type,
+                rule["channel"],
+                safe_target_url,
+                json_dumps(payload),
+                "pending",
+                now_iso(),
+            ),
+        )
+        matched_rule = True
+    if matched_rule:
+        return
     if not should_notify_event(site, event_type):
         return
     webhook_url = site.get("webhook_url")

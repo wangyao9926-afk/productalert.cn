@@ -88,6 +88,18 @@ class ExtractedSourceText:
     text: str
     content_hash: str
     text_hash: str
+    capture_method: str
+    http_status: int | None
+    content_type: str | None
+    content_length: int
+
+
+@dataclass
+class FetchedDocument:
+    url: str
+    content: str
+    status_code: int
+    content_type: str | None
 
 
 def classify_product_url(url: str) -> tuple[str, str]:
@@ -155,7 +167,7 @@ def matches_keyword_rules(
     return True
 
 
-async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
+async def fetch_document(client: httpx.AsyncClient, url: str) -> FetchedDocument | None:
     safe_url = validate_public_http_url(url)
     try:
         for _ in range(5):
@@ -172,9 +184,19 @@ async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
         content_type = res.headers.get("content-type", "")
         if content_type and not any(kind in content_type for kind in ("text", "xml", "html")):
             return None
-        return res.text
+        return FetchedDocument(
+            url=safe_url,
+            content=res.text,
+            status_code=res.status_code,
+            content_type=content_type or None,
+        )
     except (httpx.HTTPError, UnsafeUrlError):
         return None
+
+
+async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
+    document = await fetch_document(client, url)
+    return document.content if document else None
 
 
 def canonical_candidate_key(candidate: ProductCandidate) -> str:
@@ -408,9 +430,12 @@ async def extract_source_text(url: str, selector: str | None = None) -> Extracte
         "user-agent": "Mozilla/5.0 ProductIntelligenceMonitor/1.0 (+local monitoring tool)"
     }
     async with httpx.AsyncClient(timeout=20, headers=headers) as client:
-        content = await fetch_text(client, url)
-    if not content:
+        document = await fetch_document(client, url)
+    if not document:
         return None
+
+    content = document.content
+    capture_method = "http"
 
     soup = BeautifulSoup(content, "xml" if content[:300].lower().lstrip().startswith("<?xml") else "lxml")
     for tag in soup(["script", "style", "noscript", "svg"]):
@@ -432,12 +457,28 @@ async def extract_source_text(url: str, selector: str | None = None) -> Extracte
             if text_fragment:
                 fragments.append(text_fragment)
     text = "\n".join(fragments)
+    if len(text) < 200 and not content[:300].lower().lstrip().startswith("<?xml"):
+        rendered = await try_render_page(url, selector=selector)
+        if rendered and rendered.text.strip():
+            content = rendered.html
+            text = rendered.text
+            capture_method = "browser_render"
+            document = FetchedDocument(
+                url=rendered.url or document.url,
+                content=content,
+                status_code=document.status_code,
+                content_type="text/html",
+            )
     return ExtractedSourceText(
-        url=url,
+        url=document.url,
         selector=selector,
         text=text[:12000],
         content_hash=hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest(),
         text_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        capture_method=capture_method,
+        http_status=document.status_code,
+        content_type=document.content_type,
+        content_length=len(content.encode("utf-8", errors="ignore")),
     )
 
 

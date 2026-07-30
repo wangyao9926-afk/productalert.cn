@@ -549,6 +549,10 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
                 "content_hash": extracted.content_hash,
                 "text_hash": extracted.text_hash,
                 "extracted_text": extracted.text,
+                "capture_method": extracted.capture_method,
+                "http_status": extracted.http_status,
+                "content_type": extracted.content_type,
+                "content_length": extracted.content_length,
             },
         )
 

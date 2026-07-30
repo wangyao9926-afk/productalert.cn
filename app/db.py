@@ -280,4 +280,8 @@ def row_to_dict(row: sqlite3.Row) -> dict:
     for storage_column, app_column in DB_BACKEND.json_columns.items():
         if storage_column in data:
             data[app_column] = json_loads(data.pop(storage_column), defaults.get(app_column))
+    # SQLite stores booleans as 0/1. Keep the public data contract consistent
+    # with PostgreSQL and Pydantic by returning actual Python booleans.
+    if "enabled" in data:
+        data["enabled"] = bool(data["enabled"])
     return data

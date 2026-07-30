@@ -10,6 +10,10 @@ export type SourceSnapshot = {
   content_hash?: string | null;
   text_hash?: string | null;
   extracted_text?: string | null;
+  capture_method?: "http" | "browser_render" | string | null;
+  http_status?: number | null;
+  content_type?: string | null;
+  content_length?: number | null;
 };
 
 export type ChangeDiffItem = {

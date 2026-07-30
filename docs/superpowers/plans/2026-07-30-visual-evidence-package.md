@@ -46,7 +46,7 @@ def test_different_screenshots_report_a_positive_ratio():
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `python -m unittest test_visual_evidence.py`  
+Run: `python -m unittest test_visual_evidence.py`
 Expected: failure because `app.visual_evidence` and its functions do not exist.
 
 - [ ] **Step 3: Implement the minimal primitives and renderer capture**
@@ -81,7 +81,7 @@ Add `Pillow==11.0.0` to `requirements.txt`; return the screenshot bytes with the
 
 - [ ] **Step 4: Run the focused test to verify it passes**
 
-Run: `python -m unittest test_visual_evidence.py`  
+Run: `python -m unittest test_visual_evidence.py`
 Expected: PASS with both equal and unequal image cases.
 
 - [ ] **Step 5: Commit the task**
@@ -125,7 +125,7 @@ async def test_identical_follow_up_does_not_persist_another_png(self):
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `python -m unittest test_snapshot_visual_evidence.py`  
+Run: `python -m unittest test_snapshot_visual_evidence.py`
 Expected: failure because the evidence schema, store, and snapshot fields do not exist.
 
 - [ ] **Step 3: Implement migrations, store, and capture decision**
@@ -153,7 +153,7 @@ In `capture_source_snapshot`, render a PNG independently of whether HTTP text wa
 
 - [ ] **Step 4: Run focused tests to verify they pass**
 
-Run: `python -m unittest test_visual_evidence.py test_snapshot_visual_evidence.py test_snapshot_evidence_persistence.py`  
+Run: `python -m unittest test_visual_evidence.py test_snapshot_visual_evidence.py test_snapshot_evidence_persistence.py`
 Expected: PASS; verify no PNG is written for the identical follow-up.
 
 - [ ] **Step 5: Commit the task**
@@ -189,7 +189,7 @@ def test_other_user_cannot_download_saved_snapshot_png(self):
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `python -m unittest test_snapshot_screenshot_api.py`  
+Run: `python -m unittest test_snapshot_screenshot_api.py`
 Expected: failure because the route does not exist.
 
 - [ ] **Step 3: Implement the owner-checked route and detail URL**
@@ -206,7 +206,7 @@ async def get_snapshot_screenshot(snapshot_id: int, user: dict = CurrentUser):
 
 - [ ] **Step 4: Run API and isolation tests to verify they pass**
 
-Run: `python -m unittest test_snapshot_screenshot_api.py && python -m app.api_smoke && python -m app.core_isolation_smoke`  
+Run: `python -m unittest test_snapshot_screenshot_api.py && python -m app.api_smoke && python -m app.core_isolation_smoke`
 Expected: PASS; the existing multi-user isolation behavior remains intact.
 
 - [ ] **Step 5: Commit the task**
@@ -242,7 +242,7 @@ def test_change_detail_uses_real_snapshot_screenshot_urls():
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `python -m unittest test_change_detail_visual_evidence_ui.py`  
+Run: `python -m unittest test_change_detail_visual_evidence_ui.py`
 Expected: failure because the page only renders `ScreenshotPlaceholder`.
 
 - [ ] **Step 3: Implement the minimal UI replacement**
@@ -260,7 +260,7 @@ Render one component for `snapshot_before` and one for `snapshot_after`; show th
 
 - [ ] **Step 4: Run UI tests and production build**
 
-Run: `python -m unittest test_change_detail_evidence_ui.py test_change_detail_visual_evidence_ui.py; npm.cmd run build; npm.cmd run test:ui-contract` from `frontend/`  
+Run: `python -m unittest test_change_detail_evidence_ui.py test_change_detail_visual_evidence_ui.py; npm.cmd run build; npm.cmd run test:ui-contract` from `frontend/`
 Expected: all commands pass and no screenshot placeholder claims the feature is not connected.
 
 - [ ] **Step 5: Commit the task**
@@ -288,7 +288,7 @@ self.assertIn("screenshot_url", detail["snapshot_after"])
 
 - [ ] **Step 2: Run the smoke assertion to verify it fails before any fixture update**
 
-Run: `python -m app.api_smoke`  
+Run: `python -m app.api_smoke`
 Expected: failure only if the API smoke fixture has not created a private PNG.
 
 - [ ] **Step 3: Update the fixture with a deterministic one-pixel PNG and exercise the owner URL**

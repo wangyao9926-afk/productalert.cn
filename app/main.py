@@ -26,6 +26,7 @@ from app.auth import (
     verify_password,
 )
 from app.db import ROOT, assignment_list, execute_sql, fetchall, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict, select_by_id, update_by_id
+from app.evidence_store import evidence_path
 from app.monitor import create_site, create_source, scan_site, scan_source, scheduler_loop
 from app.notifier import notification_worker_loop, process_pending_notifications
 from app.settings import database_settings, queue_settings, runtime_settings
@@ -186,7 +187,40 @@ def snapshot_detail(db, snapshot_id: int | None) -> dict | None:
     if not snapshot_id:
         return None
     row = fetchone(db, "SELECT * FROM source_snapshots WHERE id = ?", (snapshot_id,))
-    return row_to_dict(row) if row else None
+    if not row:
+        return None
+    detail = row_to_dict(row)
+    if detail.get("screenshot_path"):
+        detail["screenshot_url"] = f"/api/source-snapshots/{detail['id']}/screenshot"
+    else:
+        detail["screenshot_url"] = None
+    detail.pop("screenshot_path", None)
+    return detail
+
+
+@app.get("/api/source-snapshots/{snapshot_id}/screenshot")
+async def get_snapshot_screenshot(snapshot_id: int, user: dict = CurrentUser):
+    with get_db() as db:
+        snapshot = fetchone(
+            db,
+            """
+            SELECT source_snapshots.screenshot_path
+            FROM source_snapshots
+            JOIN monitor_sources ON monitor_sources.id = source_snapshots.source_id
+            JOIN sites ON sites.id = monitor_sources.site_id
+            WHERE source_snapshots.id = ? AND sites.user_id = ?
+            """,
+            (snapshot_id, user["id"]),
+        )
+    if not snapshot or not snapshot["screenshot_path"]:
+        raise HTTPException(status_code=404, detail="Screenshot evidence not found")
+    try:
+        screenshot_file = evidence_path(snapshot["screenshot_path"])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Screenshot evidence not found") from exc
+    if not screenshot_file.is_file():
+        raise HTTPException(status_code=404, detail="Screenshot evidence not found")
+    return FileResponse(screenshot_file, media_type="image/png")
 
 
 def csv_response(filename: str, fieldnames: list[str], rows: list[dict]) -> Response:

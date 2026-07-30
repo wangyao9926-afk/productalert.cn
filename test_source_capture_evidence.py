@@ -42,6 +42,7 @@ class SourceCaptureEvidenceTests(unittest.IsolatedAsyncioTestCase):
             url="https://example.com/new-arrivals",
             html="<html><body><h1>New collection</h1><p>Product one is now available with complete launch information.</p></body></html>",
             text="New collection Product one is now available with complete launch information.",
+            status_code=202,
         )
         with (
             patch("app.crawler.fetch_document", new=AsyncMock(return_value=response)),
@@ -53,7 +54,7 @@ class SourceCaptureEvidenceTests(unittest.IsolatedAsyncioTestCase):
         assert captured is not None
         self.assertEqual(captured.capture_method, "browser_render")
         self.assertIn("New collection", captured.text)
-        self.assertEqual(captured.http_status, 200)
+        self.assertEqual(captured.http_status, 202)
 
 
 if __name__ == "__main__":

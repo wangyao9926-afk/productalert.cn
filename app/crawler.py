@@ -466,7 +466,7 @@ async def extract_source_text(url: str, selector: str | None = None) -> Extracte
             document = FetchedDocument(
                 url=rendered.url or document.url,
                 content=content,
-                status_code=document.status_code,
+                status_code=rendered.status_code or document.status_code,
                 content_type="text/html",
             )
     return ExtractedSourceText(

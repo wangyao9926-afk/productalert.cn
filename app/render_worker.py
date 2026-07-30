@@ -12,6 +12,7 @@ class RenderedPage:
     url: str
     html: str
     text: str
+    status_code: int | None = None
 
 
 class RenderUnavailableError(RuntimeError):
@@ -55,7 +56,7 @@ async def render_page(url: str, selector: str | None = None, wait_ms: int = 1200
                 await route.continue_()
 
             await page.route("**/*", guard_request)
-            await page.goto(safe_url, wait_until="domcontentloaded", timeout=15000)
+            response = await page.goto(safe_url, wait_until="domcontentloaded", timeout=15000)
             try:
                 validate_public_http_url(page.url)
             except UnsafeUrlError:
@@ -79,7 +80,12 @@ async def render_page(url: str, selector: str | None = None, wait_ms: int = 1200
                     text = await page.locator("body").inner_text(timeout=3000)
             else:
                 text = await page.locator("body").inner_text(timeout=3000)
-            return RenderedPage(url=page.url, html=html, text=text)
+            return RenderedPage(
+                url=page.url,
+                html=html,
+                text=text,
+                status_code=response.status if response else None,
+            )
         finally:
             await browser.close()
 

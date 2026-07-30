@@ -216,6 +216,7 @@ export function ChangeDetailPage() {
   const severity = severityFor(event);
   const scanMeta = detail?.scan_metadata;
   const captureEvidence = detail?.snapshot_after;
+  const sourceEvidenceUrl = captureEvidence?.url || event?.product_url || detail?.source_url || "#";
   const beforeText = detail?.snapshot_before?.extracted_text || "旧页面未记录文本快照";
   const afterText = detail?.snapshot_after?.extracted_text || event?.summary || "检测到新的页面字段变化";
   const reviewOwner = event?.assignee || ownerByReviewStatus[reviewStatus];
@@ -333,9 +334,10 @@ export function ChangeDetailPage() {
               <div><dt>抓取方式</dt><dd>{captureEvidence.capture_method === "browser_render" ? "浏览器渲染" : "HTTP"}</dd></div>
               <div><dt>HTTP 状态</dt><dd>{captureEvidence.http_status ?? "未记录"}</dd></div>
               <div><dt>内容证据</dt><dd>{captureEvidence.content_type || "未知类型"} · {captureEvidence.content_length ?? 0} B</dd></div>
+              <div><dt>最终 URL</dt><dd><a href={captureEvidence.url || "#"} target="_blank" rel="noreferrer">{captureEvidence.url || "未记录"}</a></dd></div>
             </> : null}
             <div><dt>事件 ID</dt><dd>#{event.id}</dd></div>
-            <div><dt>链接</dt><dd><a href={event.product_url || detail?.source_url || "#"} target="_blank" rel="noreferrer"><Link2 size={13} /> 打开商品/来源链接</a></dd></div>
+            <div><dt>链接</dt><dd><a href={sourceEvidenceUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> 打开商品/来源链接</a></dd></div>
           </dl>
         </aside>
       </div>

@@ -47,6 +47,7 @@ const changeTypeLabels: Record<string, string> = {
   price_changed: "价格变化",
   availability_changed: "库存变化",
   content_changed: "信息变化",
+  visual_change: "页面视觉变化",
 };
 
 const changeTypeIcons: Record<string, typeof PackagePlus> = {
@@ -54,6 +55,7 @@ const changeTypeIcons: Record<string, typeof PackagePlus> = {
   price_changed: Tag,
   availability_changed: Archive,
   content_changed: FileText,
+  visual_change: FileText,
 };
 
 const severityText: Record<Severity, string> = {

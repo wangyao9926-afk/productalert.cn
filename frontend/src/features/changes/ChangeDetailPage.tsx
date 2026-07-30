@@ -39,6 +39,7 @@ const changeTypeLabels: Record<string, string> = {
   availability_change: "库存变化",
   content_changed: "信息变化",
   text_change: "信息变化",
+  visual_change: "页面视觉变化",
   description_change: "信息变化",
 };
 

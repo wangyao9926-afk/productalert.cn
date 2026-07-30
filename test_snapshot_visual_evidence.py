@@ -122,30 +122,43 @@ class SnapshotVisualCaptureTests(unittest.IsolatedAsyncioTestCase):
 
             url = f"https://visual-dedupe-{marker}.example.com/new"
             baseline = ExtractedSourceText(url, None, "baseline", "content-one", "text-one", "http", 200, "text/html", 8)
-            changed = ExtractedSourceText(url, None, "changed", "content-two", "text-two", "http", 200, "text/html", 7)
+            visual_only = ExtractedSourceText(url, None, "baseline", "content-one", "text-one", "http", 200, "text/html", 8)
             white = RenderedPage(url, "<body>baseline</body>", "baseline", 200, png_for_pixel(255, 255, 255))
             black = RenderedPage(url, "<body>changed</body>", "changed", 200, png_for_pixel(0, 0, 0))
             source_data = {"id": source_id, "site_id": site_id, "url": url, "selector": None}
             with tempfile.TemporaryDirectory() as temporary_directory:
                 with (
-                    patch("app.monitor.extract_source_text", new=AsyncMock(side_effect=[baseline, changed, changed])),
-                    patch("app.monitor.try_render_page", new=AsyncMock(side_effect=[white, black, black])),
+                    patch("app.monitor.extract_source_text", new=AsyncMock(side_effect=[baseline, visual_only, visual_only, visual_only])),
+                    patch("app.monitor.try_render_page", new=AsyncMock(side_effect=[white, black, black, white])),
                     patch("app.evidence_store.EVIDENCE_DIR", Path(temporary_directory)),
                 ):
                     first = await capture_source_snapshot(source_data, baseline_mode=True, notify=False)
                     second = await capture_source_snapshot(source_data, baseline_mode=False, notify=False)
                     third = await capture_source_snapshot(source_data, baseline_mode=False, notify=False)
+                    fourth = await capture_source_snapshot(source_data, baseline_mode=False, notify=False)
 
                 with get_db() as db:
                     changed_snapshot = row_to_dict(fetchone(db, "SELECT * FROM source_snapshots WHERE id = ?", (second["snapshot_id"],)))
                     duplicate_snapshot = row_to_dict(fetchone(db, "SELECT * FROM source_snapshots WHERE id = ?", (third["snapshot_id"],)))
+                    visual_event_row = fetchone(db, "SELECT * FROM change_events WHERE snapshot_after_id = ?", (second["snapshot_id"],))
+                    follow_up_visual_event_row = fetchone(db, "SELECT * FROM change_events WHERE snapshot_after_id = ?", (fourth["snapshot_id"],))
                 self.assertTrue(first["screenshot_saved"])
                 self.assertTrue(second["screenshot_saved"])
+                self.assertTrue(second["changed"])
                 self.assertEqual(changed_snapshot["visual_change_ratio"], 1.0)
                 self.assertTrue(changed_snapshot["screenshot_path"])
+                self.assertIsNotNone(visual_event_row)
+                assert visual_event_row is not None
+                visual_event = row_to_dict(visual_event_row)
+                self.assertEqual(visual_event["change_type"], "visual_change")
                 self.assertFalse(third["screenshot_saved"])
                 self.assertIsNone(duplicate_snapshot["screenshot_path"])
-                self.assertEqual(len(list(Path(temporary_directory).rglob("*.png"))), 2)
+                self.assertTrue(fourth["screenshot_saved"])
+                self.assertIsNotNone(follow_up_visual_event_row)
+                assert follow_up_visual_event_row is not None
+                follow_up_visual_event = row_to_dict(follow_up_visual_event_row)
+                self.assertEqual(follow_up_visual_event["snapshot_before_id"], second["snapshot_id"])
+                self.assertEqual(len(list(Path(temporary_directory).rglob("*.png"))), 3)
         finally:
             if site_id is not None:
                 with get_db() as db:

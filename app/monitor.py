@@ -591,32 +591,48 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
             update_by_id(db, "source_snapshots", snapshot_id, {"screenshot_path": screenshot_path})
             screenshot_saved = True
 
-        if text_changed and not baseline_mode:
-            diff_items, added, removed = create_text_diff(previous["extracted_text"] or "", extracted.text)
-            summary = f"\u9875\u9762\u6587\u672c\u53d1\u751f\u53d8\u5316\uff1a\u65b0\u589e {added} \u5904\uff0c\u5220\u9664 {removed} \u5904"
+        if (text_changed or visual_changed) and not baseline_mode:
+            if text_changed:
+                diff_items, added, removed = create_text_diff(previous["extracted_text"] or "", extracted.text)
+                change_type = "text_change"
+                severity = "normal" if added + removed < 20 else "high"
+                summary = f"\u9875\u9762\u6587\u672c\u53d1\u751f\u53d8\u5316\uff1a\u65b0\u589e {added} \u5904\uff0c\u5220\u9664 {removed} \u5904"
+            else:
+                diff_items = [
+                    {
+                        "type": "visual_change",
+                        "before": previous_visual["screenshot_hash"],
+                        "after": current_screenshot_hash,
+                        "visual_change_ratio": visual_ratio,
+                    }
+                ]
+                change_type = "visual_change"
+                severity = "normal"
+                summary = f"\u9875\u9762\u89c6\u89c9\u53d1\u751f\u53d8\u5316\uff1a\u50cf\u7d20\u53d8\u5316 {(visual_ratio or 0) * 100:.1f}%"
             event_id = insert_row(
                 db,
                 "change_events",
                 {
                     "site_id": source_data["site_id"],
                     "source_id": source_data["id"],
-                    "snapshot_before_id": previous["id"],
+                    "snapshot_before_id": previous["id"] if text_changed else previous_visual["id"],
                     "snapshot_after_id": snapshot_id,
-                    "change_type": "text_change",
-                    "severity": "normal" if added + removed < 20 else "high",
+                    "change_type": change_type,
+                    "severity": severity,
                     "summary": summary,
                     "diff": json_dumps(diff_items),
                 },
             )
-            enqueue_event_notification_if_enabled(
-                db,
-                {**source_data, "_notify_enabled": notify},
-                event_id=event_id,
-                event_type="text_change",
-                product_id=None,
-                event={"id": event_id, "change_type": "text_change", "summary": summary, "source_url": source_data["url"], "diff": diff_items},
-                product=None,
-            )
+            if text_changed:
+                enqueue_event_notification_if_enabled(
+                    db,
+                    {**source_data, "_notify_enabled": notify},
+                    event_id=event_id,
+                    event_type="text_change",
+                    product_id=None,
+                    event={"id": event_id, "change_type": "text_change", "summary": summary, "source_url": source_data["url"], "diff": diff_items},
+                    product=None,
+                )
             return {
                 "snapshot_id": snapshot_id,
                 "changed": True,

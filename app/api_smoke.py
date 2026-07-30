@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import struct
+import zlib
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from app.db import DB_BACKEND, execute_sql, get_db, init_db
+from app.evidence_store import evidence_path, save_screenshot
 from app.main import app
 from app.settings import queue_settings, runtime_settings
 
@@ -19,6 +22,15 @@ def cleanup_user(email: str) -> None:
         execute_sql(db, "DELETE FROM users WHERE email = ?", (email,))
 
 
+def smoke_screenshot_png() -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    body = zlib.compress(b"\x00\xff\xff\xff\xff")
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", body) + chunk(b"IEND", b"")
+
+
 def run_smoke_test() -> dict:
     init_db()
 
@@ -28,6 +40,7 @@ def run_smoke_test() -> dict:
     site_id: int | None = None
     source_id: int | None = None
     event_id: int | None = None
+    screenshot_path: str | None = None
 
     client = TestClient(app)
     try:
@@ -131,6 +144,12 @@ def run_smoke_test() -> dict:
                 (source_id, f"https://1.0.0.1/{marker}/source", f"hash-{marker}", f"text-{marker}", "old"),
             )
             snapshot_id = cursor.fetchone()["id"] if DB_BACKEND.name == "postgresql" else cursor.lastrowid
+            screenshot_path = save_screenshot(source_id, snapshot_id, smoke_screenshot_png())
+            execute_sql(
+                db,
+                "UPDATE source_snapshots SET screenshot_path = ?, screenshot_hash = ? WHERE id = ?",
+                (screenshot_path, "smoke-screenshot-hash", snapshot_id),
+            )
             event_sql = """
                 INSERT INTO change_events (site_id, source_id, snapshot_after_id, change_type, severity, summary)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -151,6 +170,12 @@ def run_smoke_test() -> dict:
             raise RuntimeError(f"change event detail returned wrong id: {event_detail_data}")
         if event_detail_data.get("snapshot_after", {}).get("extracted_text") != "old":
             raise RuntimeError(f"change event detail did not include snapshot_after: {event_detail_data}")
+        if not event_detail_data.get("snapshot_after", {}).get("screenshot_url"):
+            raise RuntimeError("change event detail did not include screenshot evidence URL")
+        screenshot_response = client.get(event_detail_data["snapshot_after"]["screenshot_url"], headers=headers)
+        assert_status(screenshot_response, 200, "snapshot screenshot evidence")
+        if screenshot_response.headers.get("content-type") != "image/png":
+            raise RuntimeError("snapshot screenshot evidence was not a PNG")
         if "scan_metadata" not in event_detail_data:
             raise RuntimeError(f"change event detail did not include scan_metadata: {event_detail_data}")
 
@@ -305,6 +330,14 @@ def run_smoke_test() -> dict:
         if site_id is not None:
             client.delete(f"/api/sites/{site_id}", headers=locals().get("headers", {}))
         cleanup_user(email)
+        if screenshot_path:
+            evidence_file = evidence_path(screenshot_path)
+            if evidence_file.is_file():
+                evidence_file.unlink()
+            try:
+                evidence_file.parent.rmdir()
+            except OSError:
+                pass
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ import { ArrowUpRight, BellRing, CheckCircle2, Clock3, Database, ExternalLink, P
 import { Link } from "react-router-dom";
 import { loadOverview, type OverviewData } from "../../api/overview";
 
-const eventLabels: Record<string, string> = { new_product: "新品上架", price_changed: "价格变化", availability_changed: "库存变化", content_changed: "信息变化" };
+const eventLabels: Record<string, string> = { new_product: "新品上架", variant_new: "新增变体", price_changed: "价格变化", availability_changed: "库存变化", content_changed: "信息变化" };
 const sourceLabels = {
   live: "真实 API",
   auth_required: "需要登录",

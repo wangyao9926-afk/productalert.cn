@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from app.crawler import ProductCandidate, product_from_shopify_payload
 from app.db import execute_sql, fetchall, get_db, init_db, insert_row, row_to_dict
-from app.monitor import extract_and_store_product
+from app.monitor import extract_and_store_product, sync_product_variants
 from app.main import app
 from fastapi.testclient import TestClient
 
@@ -159,6 +159,72 @@ class VariantPersistenceTests(unittest.IsolatedAsyncioTestCase):
             if site_id is not None:
                 with get_db() as db:
                     execute_sql(db, "DELETE FROM sites WHERE id = ?", (site_id,))
+
+    async def test_variant_additions_and_reliable_removals_create_lifecycle_events(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        site_id: int | None = None
+        url = f"https://variant-lifecycle-{marker}.example.com/products/trail-pack"
+        with get_db() as db:
+            site_id = insert_row(db, "sites", {"user_id": 1, "name": "Variant lifecycle site", "url": f"https://variant-lifecycle-{marker}.example.com", "scan_interval_minutes": 60, "notification_events": "[\"product_new\", \"variant_new\", \"availability_change\"]"})
+            source_id = insert_row(db, "monitor_sources", {"site_id": site_id, "source_type": "listing_page", "url": f"https://variant-lifecycle-{marker}.example.com/collections/new", "scan_interval_minutes": 60})
+            insert_row(db, "source_snapshots", {"source_id": source_id, "url": url, "content_hash": "baseline-content", "text_hash": "baseline-text"})
+        source_data = {"id": source_id, "site_id": site_id, "site_name": "Variant lifecycle site", "url": url}
+        baseline = ProductCandidate(
+            url=url,
+            payload={"kind": "shopify_product", "product": {"title": "Trail Pack", "variants": [
+                {"id": 101, "sku": "TP-RED", "title": "Red", "price": "39.00", "available": True},
+                {"id": 102, "sku": "TP-BLU", "title": "Blue", "price": "45.00", "available": True},
+            ]}},
+        )
+        changed = ProductCandidate(
+            url=url,
+            payload={"kind": "shopify_product", "product": {"title": "Trail Pack", "variants": [
+                {"id": 101, "sku": "TP-RED", "title": "Red", "price": "39.00", "available": True},
+                {"id": 103, "sku": "TP-GRN", "title": "Green", "price": "45.00", "available": True},
+            ]}},
+        )
+        try:
+            await extract_and_store_product(baseline, source_data, source_id, discovery_status="baseline", notify=False, record_changes=False)
+            await extract_and_store_product(changed, source_data, source_id, discovery_status="known", notify=False, record_changes=True)
+            with get_db() as db:
+                events = [row_to_dict(row) for row in fetchall(db, "SELECT * FROM change_events WHERE site_id = ? ORDER BY id", (site_id,))]
+                variants = [row_to_dict(row) for row in fetchall(db, "SELECT * FROM product_variants WHERE product_id = (SELECT id FROM products WHERE site_id = ?)", (site_id,))]
+            self.assertEqual([event["change_type"] for event in events], ["variant_new", "availability_change"])
+            self.assertEqual([event["diff"][0]["field"] for event in events], ["variant_added", "variant_removed"])
+            active_by_external_id = {variant["external_id"]: variant["is_active"] for variant in variants}
+            self.assertEqual(active_by_external_id, {"101": True, "102": False, "103": True})
+        finally:
+            if site_id is not None:
+                with get_db() as db:
+                    execute_sql(db, "DELETE FROM sites WHERE id = ?", (site_id,))
+
+    async def test_incomplete_generic_extraction_never_deactivates_known_variants(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        with get_db() as db:
+            site_id = insert_row(db, "sites", {"user_id": 1, "name": "Variant safety site", "url": f"https://variant-safety-{marker}.example.com", "scan_interval_minutes": 60, "notification_events": "[\"product_new\"]"})
+            product_id = insert_row(db, "products", {"site_id": site_id, "url": f"https://variant-safety-{marker}.example.com/products/trail-pack", "title": "Trail Pack", "content_hash": marker})
+        source = ProductCandidate(
+            url=f"https://variant-safety-{marker}.example.com/products/trail-pack",
+            payload={"kind": "shopify_product", "product": {"title": "Trail Pack", "variants": [
+                {"id": 101, "sku": "TP-RED", "title": "Red", "price": "39.00", "available": True},
+            ]}},
+        )
+        try:
+            product = product_from_shopify_payload(source)
+            assert product is not None
+            with get_db() as db:
+                sync_product_variants(db, product_id, product)
+                product.extraction_source = "jsonld"
+                product.variants = []
+                sync_product_variants(db, product_id, product)
+                variant = row_to_dict(fetchall(db, "SELECT * FROM product_variants WHERE product_id = ?", (product_id,))[0])
+            self.assertTrue(variant["is_active"])
+            self.assertEqual(variant["availability"], "in_stock")
+        finally:
+            with get_db() as db:
+                execute_sql(db, "DELETE FROM sites WHERE id = ?", (site_id,))
 
 
 class VariantApiTests(unittest.TestCase):

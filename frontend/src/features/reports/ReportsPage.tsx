@@ -43,7 +43,7 @@ function isSameDay(value: string | null | undefined, offset: number) {
 
 function eventKind(event: ChangeEvent) {
   const type = event.change_type || "";
-  if (type === "new_product" || type === "product_new") return "new";
+  if (type === "new_product" || type === "product_new" || type === "variant_new") return "new";
   if (type === "price_changed" || type === "price_change") return "price";
   if (type === "availability_changed" || type === "availability_change") return "stock";
   return "info";

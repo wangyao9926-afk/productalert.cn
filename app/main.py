@@ -44,6 +44,7 @@ InboxStatus = Literal["unread", "important", "read", "false_positive", "follow_u
 NotificationChannel = Literal["webhook", "email", "wecom", "feishu"]
 NotificationEvent = Literal[
     "product_new",
+    "variant_new",
     "price_change",
     "availability_change",
     "description_change",
@@ -669,7 +670,7 @@ async def list_product_variants(product_id: int, user: dict = CurrentUser) -> li
             """
             SELECT * FROM product_variants
             WHERE product_id = ?
-            ORDER BY availability = 'in_stock' DESC, price_amount ASC, id ASC
+            ORDER BY is_active DESC, availability = 'in_stock' DESC, price_amount ASC, id ASC
             """,
             (product_id,),
         )

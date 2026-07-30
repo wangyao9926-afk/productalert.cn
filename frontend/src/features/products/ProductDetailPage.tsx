@@ -44,6 +44,7 @@ function relativeTime(value?: string | null) {
 
 function eventLabel(event: ChangeEvent) {
   if (event.change_type === "new_product" || event.change_type === "product_new") return "新品上新";
+  if (event.change_type === "variant_new") return "新增变体";
   if (event.change_type === "price_changed" || event.change_type === "price_change") return "价格变化";
   if (event.change_type === "availability_changed" || event.change_type === "availability_change") return "库存变化";
   return "信息变化";
@@ -159,7 +160,7 @@ export function ProductDetailPage() {
                   <td>{variant.sku || "未采集"}</td>
                   <td>{variant.option_values || "未采集"}</td>
                   <td>{variantPrice(variant.price_amount, variant.price, product.currency)}<span className="table-sub">{variant.compare_at_price ? `划线价 ${variant.compare_at_price}` : ""}</span></td>
-                  <td><span className="tag">{availabilityText(variant.availability)}</span></td>
+                  <td><span className="tag">{variant.is_active ? availabilityText(variant.availability) : "已下架"}</span></td>
                 </tr>
               ))}</tbody>
             </table>

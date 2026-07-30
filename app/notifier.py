@@ -12,6 +12,7 @@ DEFAULT_NOTIFICATION_EVENTS = {"product_new"}
 
 EVENT_LABELS = {
     "product_new": "新增产品",
+    "variant_new": "新增变体",
     "price_change": "价格变化",
     "availability_change": "库存变化",
     "description_change": "描述变化",

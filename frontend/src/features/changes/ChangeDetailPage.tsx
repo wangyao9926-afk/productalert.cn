@@ -33,6 +33,7 @@ type FieldDiff = {
 const changeTypeLabels: Record<string, string> = {
   new_product: "新品上新",
   product_new: "新品上新",
+  variant_new: "新增变体",
   price_changed: "价格变化",
   price_change: "价格变化",
   availability_changed: "库存变化",
@@ -89,6 +90,7 @@ const noteByReviewStatus: Record<ReviewStatus, string> = {
 function severityFor(event?: ChangeEvent | ChangeDetail) {
   if ((event as ChangeDetail | undefined)?.severity) return (event as ChangeDetail).severity || "中";
   if (!event) return "中";
+  if (event.change_type === "variant_new") return "高";
   if (event.change_type === "new_product" || event.change_type === "product_new" || event.change_type === "price_changed" || event.change_type === "price_change") return "高";
   if (event.change_type === "availability_changed" || event.change_type === "availability_change") return "中";
   return "低";
@@ -98,6 +100,8 @@ function diffFieldLabel(item: Record<string, unknown>, index: number) {
   const labels: Record<string, string> = {
     variant_price: "变体价格",
     variant_availability: "变体库存",
+    variant_added: "新增变体",
+    variant_removed: "下架变体",
   };
   const base = String(item.label || labels[String(item.field || "")] || item.field || `字段 ${index + 1}`);
   const variant = item.variant_sku || item.variant_title || item.variant_external_id;
@@ -157,6 +161,13 @@ function buildFieldDiff(event: ChangeEvent | ChangeDetail): FieldDiff[] {
     ];
   }
 
+  if (event.change_type === "variant_new") {
+    return [
+      { field: "新增变体", before: "—", after: event.summary || "新增规格", highlight: true },
+      { field: "商品标题", before: event.product_title || "未命名产品", after: event.product_title || "未命名产品", highlight: false },
+    ];
+  }
+
   return [
     { field: "页面文案", before: "旧版活动说明", after: event.summary || "新版活动说明", highlight: true },
     { field: "标题", before: event.product_title || "未命名产品", after: event.product_title || "未命名产品", highlight: false },
@@ -168,6 +179,7 @@ function confidenceFor(event?: ChangeEvent | ChangeDetail, mode: DetailMode = "f
   if (!event) return 82;
   if (mode === "real" && (event as ChangeDetail).snapshot_after) return 92;
   if (event.change_type === "new_product" || event.change_type === "product_new") return 94;
+  if (event.change_type === "variant_new") return 92;
   if (event.change_type === "price_changed" || event.change_type === "price_change") return 91;
   if (event.change_type === "availability_changed" || event.change_type === "availability_change") return 86;
   return 78;

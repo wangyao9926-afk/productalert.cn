@@ -12,6 +12,7 @@ export type ProductVariant = {
   price_amount?: number | null;
   compare_at_price?: number | null;
   availability?: string | null;
+  is_active: boolean;
 };
 
 export type ProductDetailContext = {

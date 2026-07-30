@@ -402,7 +402,9 @@ def sync_product_variants(
     existing_rows = fetchall(db, "SELECT * FROM product_variants WHERE product_id = ?", (product_id,))
     existing_by_external_id = {row["external_id"]: row for row in existing_rows}
     snapshot_id = latest_snapshot_id(db, source_id) if record_changes and source_id else None
+    seen_external_ids: set[str] = set()
     for variant in product.variants:
+        seen_external_ids.add(variant.external_id)
         values = {
             "sku": variant.sku,
             "title": variant.title,
@@ -411,6 +413,7 @@ def sync_product_variants(
             "price_amount": variant.price_amount,
             "compare_at_price": variant.compare_at_price,
             "availability": variant.availability,
+            "is_active": True,
             "last_seen_at": now_iso(),
         }
         existing = existing_by_external_id.get(variant.external_id)
@@ -479,6 +482,66 @@ def sync_product_variants(
                 "first_seen_at": now_iso(),
             },
         )
+        if existing_rows and snapshot_id and source_data:
+            variant_label = variant.sku or variant.title or variant.external_id
+            diff = event_diff("variant_added", None, variant_label)
+            diff[0].update({"variant_external_id": variant.external_id, "variant_sku": variant.sku, "variant_title": variant.title})
+            summary = f"新增变体：{product.title} · {variant_label}"
+            event_id = insert_product_change_event(
+                db,
+                site_id=source_data["site_id"],
+                source_id=source_id,
+                product_id=product_id,
+                snapshot_id=snapshot_id,
+                change_type="variant_new",
+                severity="high",
+                summary=summary,
+                diff=diff,
+            )
+            enqueue_event_notification_if_enabled(
+                db,
+                source_data,
+                event_id=event_id,
+                event_type="variant_new",
+                product_id=product_id,
+                event={"id": event_id, "change_type": "variant_new", "summary": summary, "diff": diff},
+                product={"id": product_id, "title": product.title, "url": product.url, "price": variant.price},
+            )
+
+    # Only complete Shopify payloads are authoritative enough to mark a
+    # historical color or size as removed. Generic HTML/JSON-LD parsing may
+    # omit variants entirely and must not deactivate stored records.
+    if product.extraction_source != "shopify_api" or not product.variants:
+        return
+    for existing in existing_rows:
+        if not existing["is_active"] or existing["external_id"] in seen_external_ids:
+            continue
+        variant_label = existing["sku"] or existing["title"] or existing["external_id"]
+        if snapshot_id and source_data:
+            diff = event_diff("variant_removed", variant_label, None)
+            diff[0].update({"variant_external_id": existing["external_id"], "variant_sku": existing["sku"], "variant_title": existing["title"]})
+            summary = f"变体下架：{product.title} · {variant_label}"
+            event_id = insert_product_change_event(
+                db,
+                site_id=source_data["site_id"],
+                source_id=source_id,
+                product_id=product_id,
+                snapshot_id=snapshot_id,
+                change_type="availability_change",
+                severity="high",
+                summary=summary,
+                diff=diff,
+            )
+            enqueue_event_notification_if_enabled(
+                db,
+                source_data,
+                event_id=event_id,
+                event_type="availability_change",
+                product_id=product_id,
+                event={"id": event_id, "change_type": "availability_change", "summary": summary, "diff": diff},
+                product={"id": product_id, "title": product.title, "url": product.url, "availability": "unavailable"},
+            )
+        update_by_id(db, "product_variants", existing["id"], {"is_active": False, "availability": "unavailable"})
 
 
 async def extract_and_store_product(

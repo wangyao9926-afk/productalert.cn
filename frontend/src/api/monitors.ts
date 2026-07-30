@@ -2,7 +2,7 @@ import { patchJson, sendJson } from "./client";
 import type { Site } from "../types/api";
 
 type BackendSourceType = "listing_page" | "custom_page";
-type NotificationEvent = "product_new" | "price_change" | "availability_change" | "description_change" | "text_change";
+type NotificationEvent = "product_new" | "variant_new" | "price_change" | "availability_change" | "description_change" | "text_change";
 
 export type CreateMonitorTaskInput = {
   targetUrl: string;
@@ -35,13 +35,13 @@ export type ScanJob = {
   status?: string;
 };
 
-const targetToNotificationEvent: Record<string, NotificationEvent> = {
-  "new-products": "product_new",
-  price: "price_change",
-  stock: "availability_change",
-  text: "text_change",
-  image: "description_change",
-  area: "text_change",
+const targetToNotificationEvent: Record<string, NotificationEvent[]> = {
+  "new-products": ["product_new", "variant_new"],
+  price: ["price_change"],
+  stock: ["availability_change"],
+  text: ["text_change"],
+  image: ["description_change"],
+  area: ["text_change"],
 };
 
 function frequencyToMinutes(frequency: string) {
@@ -65,7 +65,7 @@ function siteNameFromUrl(targetUrl: string) {
 }
 
 function notificationEventsForTargets(targets: string[]) {
-  const events = targets.map((target) => targetToNotificationEvent[target]).filter(Boolean);
+  const events = targets.flatMap((target) => targetToNotificationEvent[target] || []);
   return Array.from(new Set(events.length ? events : ["product_new"]));
 }
 

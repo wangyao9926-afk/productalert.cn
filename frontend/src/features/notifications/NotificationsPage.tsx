@@ -25,6 +25,7 @@ const channelCards = [
 
 const eventTypeLabels: Record<string, string> = {
   product_new: "新品上新",
+  variant_new: "新增变体",
   price_change: "价格变化",
   availability_change: "库存变化",
   description_change: "信息变化",

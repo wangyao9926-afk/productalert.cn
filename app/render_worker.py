@@ -13,6 +13,7 @@ class RenderedPage:
     html: str
     text: str
     status_code: int | None = None
+    screenshot_png: bytes | None = None
 
 
 class RenderUnavailableError(RuntimeError):
@@ -80,11 +81,13 @@ async def render_page(url: str, selector: str | None = None, wait_ms: int = 1200
                     text = await page.locator("body").inner_text(timeout=3000)
             else:
                 text = await page.locator("body").inner_text(timeout=3000)
+            screenshot_png = await page.screenshot(type="png", full_page=True)
             return RenderedPage(
                 url=page.url,
                 html=html,
                 text=text,
                 status_code=response.status if response else None,
+                screenshot_png=screenshot_png,
             )
         finally:
             await browser.close()

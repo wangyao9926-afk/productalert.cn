@@ -14,6 +14,10 @@ export type SourceSnapshot = {
   http_status?: number | null;
   content_type?: string | null;
   content_length?: number | null;
+  screenshot_hash?: string | null;
+  screenshot_url?: string | null;
+  visual_change_ratio?: number | null;
+  screenshot_error?: string | null;
 };
 
 export type ChangeDiffItem = {

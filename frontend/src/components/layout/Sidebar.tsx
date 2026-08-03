@@ -21,6 +21,7 @@ const items = [
   { to: "/monitors", label: "监控中心", icon: Gauge },
   { to: "/inbox", label: "情报收件箱", icon: Inbox, badge: 3 },
   { to: "/products", label: "产品库", icon: Boxes },
+  { to: "/price-matrix", label: "价格矩阵", icon: Activity },
   { to: "/notifications", label: "通知中心", icon: BellRing },
   { to: "/reports", label: "报告与趋势", icon: Activity },
   { to: "/operations", label: "运维中心", icon: ListChecks },

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import unescape
 from typing import Any, Iterable, Sequence
 from urllib.parse import urljoin, urlparse
@@ -61,6 +61,26 @@ class ProductCandidate:
 
 
 @dataclass
+class ExtractedVariant:
+    external_id: str
+    sku: str | None
+    title: str | None
+    option_values: list[str]
+    price: str | None
+    price_amount: float | None
+    compare_at_price: float | None
+    availability: str | None
+
+
+@dataclass
+class ExtractedIdentifier:
+    kind: str
+    value: str
+    raw_value: str
+    provenance: str
+
+
+@dataclass
 class ExtractedProduct:
     url: str
     title: str
@@ -72,6 +92,7 @@ class ExtractedProduct:
     compare_at_price: float | None
     availability: str | None
     variant_count: int | None
+    variants: list[ExtractedVariant]
     features: list[str]
     extraction_source: str
     confidence_score: float
@@ -79,6 +100,7 @@ class ExtractedProduct:
     confidence_reasons: list[str]
     content_hash: str
     raw_text: str
+    identifiers: list[ExtractedIdentifier] = field(default_factory=list)
 
 
 @dataclass
@@ -88,6 +110,18 @@ class ExtractedSourceText:
     text: str
     content_hash: str
     text_hash: str
+    capture_method: str
+    http_status: int | None
+    content_type: str | None
+    content_length: int
+
+
+@dataclass
+class FetchedDocument:
+    url: str
+    content: str
+    status_code: int
+    content_type: str | None
 
 
 def classify_product_url(url: str) -> tuple[str, str]:
@@ -155,7 +189,7 @@ def matches_keyword_rules(
     return True
 
 
-async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
+async def fetch_document(client: httpx.AsyncClient, url: str) -> FetchedDocument | None:
     safe_url = validate_public_http_url(url)
     try:
         for _ in range(5):
@@ -172,9 +206,19 @@ async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
         content_type = res.headers.get("content-type", "")
         if content_type and not any(kind in content_type for kind in ("text", "xml", "html")):
             return None
-        return res.text
+        return FetchedDocument(
+            url=safe_url,
+            content=res.text,
+            status_code=res.status_code,
+            content_type=content_type or None,
+        )
     except (httpx.HTTPError, UnsafeUrlError):
         return None
+
+
+async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
+    document = await fetch_document(client, url)
+    return document.content if document else None
 
 
 def canonical_candidate_key(candidate: ProductCandidate) -> str:
@@ -408,9 +452,12 @@ async def extract_source_text(url: str, selector: str | None = None) -> Extracte
         "user-agent": "Mozilla/5.0 ProductIntelligenceMonitor/1.0 (+local monitoring tool)"
     }
     async with httpx.AsyncClient(timeout=20, headers=headers) as client:
-        content = await fetch_text(client, url)
-    if not content:
+        document = await fetch_document(client, url)
+    if not document:
         return None
+
+    content = document.content
+    capture_method = "http"
 
     soup = BeautifulSoup(content, "xml" if content[:300].lower().lstrip().startswith("<?xml") else "lxml")
     for tag in soup(["script", "style", "noscript", "svg"]):
@@ -432,12 +479,28 @@ async def extract_source_text(url: str, selector: str | None = None) -> Extracte
             if text_fragment:
                 fragments.append(text_fragment)
     text = "\n".join(fragments)
+    if len(text) < 200 and not content[:300].lower().lstrip().startswith("<?xml"):
+        rendered = await try_render_page(url, selector=selector)
+        if rendered and rendered.text.strip():
+            content = rendered.html
+            text = rendered.text
+            capture_method = "browser_render"
+            document = FetchedDocument(
+                url=rendered.url or document.url,
+                content=content,
+                status_code=rendered.status_code or document.status_code,
+                content_type="text/html",
+            )
     return ExtractedSourceText(
-        url=url,
+        url=document.url,
         selector=selector,
         text=text[:12000],
         content_hash=hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest(),
         text_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        capture_method=capture_method,
+        http_status=document.status_code,
+        content_type=document.content_type,
+        content_length=len(content.encode("utf-8", errors="ignore")),
     )
 
 
@@ -475,6 +538,18 @@ def parse_money(value: Any) -> float | None:
         return float(match.group(0).replace(",", ""))
     except ValueError:
         return None
+
+
+def normalized_identifier(kind: str, value: Any) -> str | None:
+    raw = clean_text(str(value or ""))
+    if not raw:
+        return None
+    if kind == "gtin":
+        digits = re.sub(r"\D", "", raw)
+        return digits or None
+    if kind == "sku":
+        return raw.upper()
+    return raw
 
 
 def format_money(value: float, currency: str | None = None) -> str:
@@ -731,6 +806,43 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
     description = raw_text[:1000]
 
     variants = product.get("variants") if isinstance(product.get("variants"), list) else []
+    option_names = [
+        clean_text(str(option.get("name")))
+        for option in product.get("options", [])
+        if isinstance(option, dict) and clean_text(str(option.get("name") or ""))
+    ]
+    extracted_variants: list[ExtractedVariant] = []
+    identifiers: list[ExtractedIdentifier] = []
+    product_external_id = normalized_identifier("platform_product_id", product.get("id"))
+    if product_external_id:
+        identifiers.append(ExtractedIdentifier("platform_product_id", product_external_id, str(product.get("id")), "shopify_product"))
+    for index, variant in enumerate(variants):
+        if not isinstance(variant, dict):
+            continue
+        raw_external_id = variant.get("id") or variant.get("sku") or variant.get("title") or str(index + 1)
+        option_values = [
+            f"{option_name}: {clean_text(str(variant.get(f'option{position}') or ''))}"
+            for position, option_name in enumerate(option_names, start=1)
+            if clean_text(str(variant.get(f"option{position}") or ""))
+        ]
+        price_amount = parse_money(variant.get("price"))
+        compare_at_price = parse_money(variant.get("compare_at_price"))
+        extracted_variants.append(
+            ExtractedVariant(
+                external_id=str(raw_external_id),
+                sku=clean_text(str(variant.get("sku") or "")) or None,
+                title=clean_text(str(variant.get("title") or "")) or None,
+                option_values=option_values,
+                price=format_money(price_amount) if price_amount is not None else None,
+                price_amount=price_amount,
+                compare_at_price=compare_at_price,
+                availability="in_stock" if variant.get("available") is True else ("out_of_stock" if variant.get("available") is False else None),
+            )
+        )
+        for kind, raw_identifier in (("sku", variant.get("sku")), ("gtin", variant.get("barcode")), ("platform_variant_id", variant.get("id"))):
+            normalized = normalized_identifier(kind, raw_identifier)
+            if normalized:
+                identifiers.append(ExtractedIdentifier(kind, normalized, str(raw_identifier), "shopify_variant"))
     prices = [
         parsed
         for parsed in (parse_money(variant.get("price")) for variant in variants if isinstance(variant, dict))
@@ -797,6 +909,7 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
         compare_at_price=compare_at_price,
         availability=availability,
         variant_count=variant_count,
+        variants=extracted_variants,
         features=features,
         extraction_source="shopify_api",
         confidence_score=confidence_score,
@@ -804,6 +917,7 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
         confidence_reasons=confidence_reasons,
         content_hash=hashlib.sha256(hash_source.encode("utf-8")).hexdigest(),
         raw_text=raw_text[:4000],
+        identifiers=identifiers,
     )
 
 
@@ -869,6 +983,7 @@ def product_from_html(url: str, html: str, title_hint: str | None = None, render
         compare_at_price=structured_price.get("compare_at_price"),
         availability=structured_price.get("availability"),
         variant_count=structured_price.get("variant_count"),
+        variants=[],
         features=features,
         extraction_source=extraction_source,
         confidence_score=confidence_score,

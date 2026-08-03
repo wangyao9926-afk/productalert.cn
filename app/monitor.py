@@ -7,8 +7,11 @@ from datetime import datetime, timedelta, timezone
 
 from app.crawler import classify_product_url, discover_candidates, extract_candidate_product, extract_source_text, normalize_url
 from app.db import DB_BACKEND, boolean_true_sql, execute_sql, fetchall, fetchone, get_db, insert_ignore, insert_row, is_integrity_error, json_dumps, row_to_dict, select_by_id, storage_column, update_by_id, update_by_id_when
+from app.evidence_store import load_screenshot, save_screenshot
 from app.notifier import change_event_payload, should_notify_event
+from app.render_worker import try_render_page
 from app.url_safety import validate_public_http_url
+from app.visual_evidence import screenshot_hash, visual_change_ratio
 
 
 def now_iso() -> str:
@@ -209,18 +212,33 @@ def event_diff(field: str, before, after) -> list[dict]:
     return [{"type": "changed", "field": field, "before": before, "after": after}]
 
 
+def is_event_suppressed(db, source_id: int, change_type: str) -> bool:
+    row = fetchone(
+        db,
+        """
+        SELECT enabled FROM event_suppression_rules
+        WHERE source_id = ? AND change_type = ?
+        """,
+        (source_id, change_type),
+    )
+    return bool(row and row["enabled"])
+
+
 def insert_product_change_event(
     db,
     *,
     site_id: int,
     source_id: int,
-    product_id: int,
+    product_id: int | None,
     snapshot_id: int,
     change_type: str,
     severity: str,
     summary: str,
     diff: list[dict],
-) -> int:
+    snapshot_before_id: int | None = None,
+) -> int | None:
+    if is_event_suppressed(db, source_id, change_type):
+        return None
     return insert_row(
         db,
         "change_events",
@@ -228,6 +246,7 @@ def insert_product_change_event(
             "site_id": site_id,
             "source_id": source_id,
             "product_id": product_id,
+            "snapshot_before_id": snapshot_before_id,
             "snapshot_after_id": snapshot_id,
             "change_type": change_type,
             "severity": severity,
@@ -241,13 +260,74 @@ def enqueue_event_notification_if_enabled(
     db,
     site: dict,
     *,
-    event_id: int,
+    event_id: int | None,
     event_type: str,
     product_id: int | None,
     event: dict,
     product: dict | None,
 ) -> None:
+    if event_id is None:
+        return
     if site.get("_notify_enabled") is False:
+        return
+    event_row = fetchone(db, "SELECT severity, inbox_status FROM change_events WHERE id = ?", (event_id,))
+    event_severity = str(event.get("severity") or (event_row["severity"] if event_row else "normal") or "normal")
+    event_inbox_status = str((event_row["inbox_status"] if event_row else "unread") or "unread")
+    severity_rank = {"low": 0, "normal": 1, "high": 2, "critical": 3}
+    matching_rules = fetchall(
+        db,
+        """
+        SELECT notification_rules.*
+        FROM notification_rules
+        JOIN sites ON sites.user_id = notification_rules.user_id
+        WHERE notification_rules.enabled = 1
+          AND sites.id = ?
+          AND (notification_rules.site_id = ? OR notification_rules.site_id IS NULL)
+        """,
+        (site["site_id"], site["site_id"]),
+    )
+    matched_rule = False
+    for raw_rule in matching_rules:
+        rule = row_to_dict(raw_rule)
+        if rule.get("channel") not in {"webhook", "wecom", "feishu"}:
+            continue
+        if event_type not in set(rule.get("event_types") or []):
+            continue
+        if severity_rank.get(event_severity, 1) < severity_rank.get(str(rule.get("min_severity") or "normal"), 1):
+            continue
+        if str(rule.get("inbox_status") or "unread") != event_inbox_status:
+            continue
+        matched_rule = True
+        max_price_amount = rule.get("max_price_amount")
+        if max_price_amount is not None:
+            if not product or product.get("price_amount") is None:
+                continue
+            try:
+                if float(product["price_amount"]) > float(max_price_amount):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        if rule.get("require_in_stock") and (not product or product.get("availability") not in {"in_stock", "available"}):
+            continue
+        safe_target_url = validate_public_http_url(rule["target_url"])
+        payload = change_event_payload(event, product)
+        insert_ignore(
+            db,
+            "notification_outbox",
+            ["site_id", "product_id", "event_id", "event_type", "channel", "target_url", "payload", "status", "next_attempt_at"],
+            (
+                site["site_id"],
+                product_id,
+                event_id,
+                event_type,
+                rule["channel"],
+                safe_target_url,
+                json_dumps(payload),
+                "pending",
+                now_iso(),
+            ),
+        )
+    if matched_rule:
         return
     if not should_notify_event(site, event_type):
         return
@@ -388,6 +468,224 @@ def record_new_product_event(db, saved: dict, source_data: dict, source_id: int)
     )
 
 
+def sync_product_variants(
+    db,
+    product_id: int,
+    product,
+    source_data: dict | None = None,
+    source_id: int | None = None,
+    record_changes: bool = False,
+) -> None:
+    existing_rows = fetchall(db, "SELECT * FROM product_variants WHERE product_id = ?", (product_id,))
+    existing_by_external_id = {row["external_id"]: row for row in existing_rows}
+    snapshot_id = latest_snapshot_id(db, source_id) if record_changes and source_id else None
+    seen_external_ids: set[str] = set()
+    for variant in product.variants:
+        seen_external_ids.add(variant.external_id)
+        values = {
+            "sku": variant.sku,
+            "title": variant.title,
+            "option_values": " / ".join(variant.option_values),
+            "price": variant.price,
+            "price_amount": variant.price_amount,
+            "compare_at_price": variant.compare_at_price,
+            "availability": variant.availability,
+            "is_active": True,
+            "last_seen_at": now_iso(),
+        }
+        existing = existing_by_external_id.get(variant.external_id)
+        if existing:
+            if snapshot_id and source_data:
+                variant_label = variant.sku or variant.title or variant.external_id
+                old_price_key = (existing["price_amount"], existing["price"], existing["compare_at_price"])
+                new_price_key = (variant.price_amount, variant.price, variant.compare_at_price)
+                if old_price_key != new_price_key:
+                    diff = event_diff("variant_price", existing["price"] or existing["price_amount"], variant.price or variant.price_amount)
+                    diff[0].update({"variant_external_id": variant.external_id, "variant_sku": variant.sku, "variant_title": variant.title})
+                    summary = f"变体价格变化：{product.title} · {variant_label}"
+                    event_id = insert_product_change_event(
+                        db,
+                        site_id=source_data["site_id"],
+                        source_id=source_id,
+                        product_id=product_id,
+                        snapshot_id=snapshot_id,
+                        change_type="price_change",
+                        severity="high",
+                        summary=summary,
+                        diff=diff,
+                    )
+                    enqueue_event_notification_if_enabled(
+                        db,
+                        source_data,
+                        event_id=event_id,
+                        event_type="price_change",
+                        product_id=product_id,
+                        event={"id": event_id, "change_type": "price_change", "summary": summary, "diff": diff},
+                        product={"id": product_id, "title": product.title, "url": product.url, "price": variant.price},
+                    )
+                if (existing["availability"] or "") != (variant.availability or ""):
+                    diff = event_diff("variant_availability", existing["availability"], variant.availability)
+                    diff[0].update({"variant_external_id": variant.external_id, "variant_sku": variant.sku, "variant_title": variant.title})
+                    summary = f"变体库存变化：{product.title} · {variant_label}"
+                    event_id = insert_product_change_event(
+                        db,
+                        site_id=source_data["site_id"],
+                        source_id=source_id,
+                        product_id=product_id,
+                        snapshot_id=snapshot_id,
+                        change_type="availability_change",
+                        severity="high",
+                        summary=summary,
+                        diff=diff,
+                    )
+                    enqueue_event_notification_if_enabled(
+                        db,
+                        source_data,
+                        event_id=event_id,
+                        event_type="availability_change",
+                        product_id=product_id,
+                        event={"id": event_id, "change_type": "availability_change", "summary": summary, "diff": diff},
+                        product={"id": product_id, "title": product.title, "url": product.url, "availability": variant.availability},
+                    )
+            update_by_id(db, "product_variants", existing["id"], values)
+            continue
+        insert_row(
+            db,
+            "product_variants",
+            {
+                "product_id": product_id,
+                "external_id": variant.external_id,
+                **values,
+                "first_seen_at": now_iso(),
+            },
+        )
+        if existing_rows and snapshot_id and source_data:
+            variant_label = variant.sku or variant.title or variant.external_id
+            diff = event_diff("variant_added", None, variant_label)
+            diff[0].update({"variant_external_id": variant.external_id, "variant_sku": variant.sku, "variant_title": variant.title})
+            summary = f"新增变体：{product.title} · {variant_label}"
+            event_id = insert_product_change_event(
+                db,
+                site_id=source_data["site_id"],
+                source_id=source_id,
+                product_id=product_id,
+                snapshot_id=snapshot_id,
+                change_type="variant_new",
+                severity="high",
+                summary=summary,
+                diff=diff,
+            )
+            enqueue_event_notification_if_enabled(
+                db,
+                source_data,
+                event_id=event_id,
+                event_type="variant_new",
+                product_id=product_id,
+                event={"id": event_id, "change_type": "variant_new", "summary": summary, "diff": diff},
+                product={"id": product_id, "title": product.title, "url": product.url, "price": variant.price},
+            )
+
+    # Only complete Shopify payloads are authoritative enough to mark a
+    # historical color or size as removed. Generic HTML/JSON-LD parsing may
+    # omit variants entirely and must not deactivate stored records.
+    if product.extraction_source != "shopify_api" or not product.variants:
+        return
+    for existing in existing_rows:
+        if not existing["is_active"] or existing["external_id"] in seen_external_ids:
+            continue
+        variant_label = existing["sku"] or existing["title"] or existing["external_id"]
+        if snapshot_id and source_data:
+            diff = event_diff("variant_removed", variant_label, None)
+            diff[0].update({"variant_external_id": existing["external_id"], "variant_sku": existing["sku"], "variant_title": existing["title"]})
+            summary = f"变体下架：{product.title} · {variant_label}"
+            event_id = insert_product_change_event(
+                db,
+                site_id=source_data["site_id"],
+                source_id=source_id,
+                product_id=product_id,
+                snapshot_id=snapshot_id,
+                change_type="availability_change",
+                severity="high",
+                summary=summary,
+                diff=diff,
+            )
+            enqueue_event_notification_if_enabled(
+                db,
+                source_data,
+                event_id=event_id,
+                event_type="availability_change",
+                product_id=product_id,
+                event={"id": event_id, "change_type": "availability_change", "summary": summary, "diff": diff},
+                product={"id": product_id, "title": product.title, "url": product.url, "availability": "unavailable"},
+            )
+        update_by_id(db, "product_variants", existing["id"], {"is_active": False, "availability": "unavailable"})
+
+
+def sync_product_identifiers(db, product_id: int, product) -> None:
+    for identifier in product.identifiers:
+        insert_ignore(
+            db,
+            "product_identifiers",
+            ["product_id", "identifier_type", "normalized_value", "raw_value", "provenance"],
+            (product_id, identifier.kind, identifier.value, identifier.raw_value, identifier.provenance),
+        )
+
+
+def refresh_product_match_groups(db, product_id: int) -> None:
+    product = fetchone(
+        db,
+        """
+        SELECT products.site_id, sites.user_id
+        FROM products
+        JOIN sites ON sites.id = products.site_id
+        WHERE products.id = ?
+        """,
+        (product_id,),
+    )
+    if not product:
+        return
+    identifiers = fetchall(
+        db,
+        """
+        SELECT identifier_type, normalized_value
+        FROM product_identifiers
+        WHERE product_id = ? AND identifier_type IN ('gtin', 'sku')
+        """,
+        (product_id,),
+    )
+    for identifier in identifiers:
+        members = fetchall(
+            db,
+            """
+            SELECT product_identifiers.product_id, products.site_id
+            FROM product_identifiers
+            JOIN products ON products.id = product_identifiers.product_id
+            JOIN sites ON sites.id = products.site_id
+            WHERE product_identifiers.identifier_type = ?
+              AND product_identifiers.normalized_value = ?
+              AND sites.user_id = ?
+            """,
+            (identifier["identifier_type"], identifier["normalized_value"], product["user_id"]),
+        )
+        if len({member["site_id"] for member in members}) < 2:
+            continue
+        group = fetchone(
+            db,
+            """
+            SELECT id FROM product_match_groups
+            WHERE user_id = ? AND identifier_type = ? AND normalized_value = ?
+            """,
+            (product["user_id"], identifier["identifier_type"], identifier["normalized_value"]),
+        )
+        group_id = group["id"] if group else insert_row(
+            db,
+            "product_match_groups",
+            {"user_id": product["user_id"], "identifier_type": identifier["identifier_type"], "normalized_value": identifier["normalized_value"]},
+        )
+        for member in members:
+            insert_ignore(db, "product_match_members", ["group_id", "product_id"], (group_id, member["product_id"]))
+
+
 async def extract_and_store_product(
     candidate,
     source_data: dict,
@@ -445,6 +743,9 @@ async def extract_and_store_product(
                     "raw_text": product.raw_text,
                 },
             )
+            sync_product_variants(db, exists["id"], product, event_source_data, source_id, record_changes)
+            sync_product_identifiers(db, exists["id"], product)
+            refresh_product_match_groups(db, exists["id"])
             return None
         product_id = insert_row(
             db,
@@ -474,6 +775,9 @@ async def extract_and_store_product(
                 "raw_text": product.raw_text,
             },
         )
+        sync_product_variants(db, product_id, product)
+        sync_product_identifiers(db, product_id, product)
+        refresh_product_match_groups(db, product_id)
 
     saved = {
         "id": product_id,
@@ -527,6 +831,11 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
     if not extracted:
         return None
 
+    rendered = await try_render_page(source_data["url"], source_data.get("selector"))
+    screenshot_png = rendered.screenshot_png if rendered else None
+    screenshot_error = None if screenshot_png else "render_unavailable"
+    current_screenshot_hash = screenshot_hash(screenshot_png) if screenshot_png else None
+
     with get_db() as db:
         previous = fetchone(
             db,
@@ -538,6 +847,24 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
             """,
             (source_data["id"],),
         )
+        previous_visual = fetchone(
+            db,
+            """
+            SELECT * FROM source_snapshots
+            WHERE source_id = ? AND screenshot_path IS NOT NULL
+            ORDER BY fetched_at DESC, id DESC
+            LIMIT 1
+            """,
+            (source_data["id"],),
+        )
+        text_changed = bool(previous and previous["text_hash"] != extracted.text_hash)
+        visual_ratio = None
+        visual_changed = False
+        if screenshot_png and previous_visual:
+            previous_png = load_screenshot(previous_visual["screenshot_path"])
+            if previous_png is not None:
+                visual_ratio = visual_change_ratio(previous_png, screenshot_png)
+                visual_changed = previous_visual["screenshot_hash"] != current_screenshot_hash
         snapshot_id = insert_row(
             db,
             "source_snapshots",
@@ -549,37 +876,76 @@ async def capture_source_snapshot(source_data: dict, baseline_mode: bool, notify
                 "content_hash": extracted.content_hash,
                 "text_hash": extracted.text_hash,
                 "extracted_text": extracted.text,
+                "capture_method": extracted.capture_method,
+                "http_status": extracted.http_status,
+                "content_type": extracted.content_type,
+                "content_length": extracted.content_length,
+                "screenshot_hash": current_screenshot_hash,
+                "visual_change_ratio": visual_ratio,
+                "screenshot_error": screenshot_error,
             },
         )
 
-        if previous and previous["text_hash"] != extracted.text_hash and not baseline_mode:
-            diff_items, added, removed = create_text_diff(previous["extracted_text"] or "", extracted.text)
-            summary = f"\u9875\u9762\u6587\u672c\u53d1\u751f\u53d8\u5316\uff1a\u65b0\u589e {added} \u5904\uff0c\u5220\u9664 {removed} \u5904"
-            event_id = insert_row(
+        screenshot_saved = False
+        if screenshot_png and (baseline_mode or not previous_visual or text_changed or visual_changed):
+            screenshot_path = save_screenshot(source_data["id"], snapshot_id, screenshot_png)
+            update_by_id(db, "source_snapshots", snapshot_id, {"screenshot_path": screenshot_path})
+            screenshot_saved = True
+
+        if (text_changed or visual_changed) and not baseline_mode:
+            if text_changed:
+                diff_items, added, removed = create_text_diff(previous["extracted_text"] or "", extracted.text)
+                change_type = "text_change"
+                severity = "normal" if added + removed < 20 else "high"
+                summary = f"\u9875\u9762\u6587\u672c\u53d1\u751f\u53d8\u5316\uff1a\u65b0\u589e {added} \u5904\uff0c\u5220\u9664 {removed} \u5904"
+            else:
+                diff_items = [
+                    {
+                        "type": "visual_change",
+                        "before": previous_visual["screenshot_hash"],
+                        "after": current_screenshot_hash,
+                        "visual_change_ratio": visual_ratio,
+                    }
+                ]
+                change_type = "visual_change"
+                severity = "normal"
+                summary = f"\u9875\u9762\u89c6\u89c9\u53d1\u751f\u53d8\u5316\uff1a\u50cf\u7d20\u53d8\u5316 {(visual_ratio or 0) * 100:.1f}%"
+            event_id = insert_product_change_event(
                 db,
-                "change_events",
-                {
-                    "site_id": source_data["site_id"],
-                    "source_id": source_data["id"],
-                    "snapshot_before_id": previous["id"],
-                    "snapshot_after_id": snapshot_id,
-                    "change_type": "text_change",
-                    "severity": "normal" if added + removed < 20 else "high",
-                    "summary": summary,
-                    "diff": json_dumps(diff_items),
-                },
-            )
-            enqueue_event_notification_if_enabled(
-                db,
-                {**source_data, "_notify_enabled": notify},
-                event_id=event_id,
-                event_type="text_change",
+                site_id=source_data["site_id"],
+                source_id=source_data["id"],
                 product_id=None,
-                event={"id": event_id, "change_type": "text_change", "summary": summary, "source_url": source_data["url"], "diff": diff_items},
-                product=None,
+                snapshot_id=snapshot_id,
+                snapshot_before_id=previous["id"] if text_changed else previous_visual["id"],
+                change_type=change_type,
+                severity=severity,
+                summary=summary,
+                diff=diff_items,
             )
-            return {"snapshot_id": snapshot_id, "changed": True, "summary": summary}
-        return {"snapshot_id": snapshot_id, "changed": False}
+            if text_changed:
+                enqueue_event_notification_if_enabled(
+                    db,
+                    {**source_data, "_notify_enabled": notify},
+                    event_id=event_id,
+                    event_type="text_change",
+                    product_id=None,
+                    event={"id": event_id, "change_type": "text_change", "summary": summary, "source_url": source_data["url"], "diff": diff_items},
+                    product=None,
+                )
+            return {
+                "snapshot_id": snapshot_id,
+                "changed": True,
+                "suppressed": event_id is None,
+                "summary": summary,
+                "screenshot_saved": screenshot_saved,
+                "visual_change_ratio": visual_ratio,
+            }
+        return {
+            "snapshot_id": snapshot_id,
+            "changed": False,
+            "screenshot_saved": screenshot_saved,
+            "visual_change_ratio": visual_ratio,
+        }
 
 
 async def scan_source(

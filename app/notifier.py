@@ -6,12 +6,14 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from app.db import execute_sql, fetchall, get_db, insert_ignore, json_dumps, row_to_dict, update_by_id, where_in_clause
+from app.settings import public_app_url
 from app.url_safety import validate_public_http_url
 
 DEFAULT_NOTIFICATION_EVENTS = {"product_new"}
 
 EVENT_LABELS = {
     "product_new": "新增产品",
+    "variant_new": "新增变体",
     "price_change": "价格变化",
     "availability_change": "库存变化",
     "description_change": "描述变化",
@@ -54,18 +56,28 @@ def change_event_payload(event: dict, product: dict | None = None) -> dict:
     label = EVENT_LABELS.get(event.get("change_type"), event.get("change_type") or "变化")
     title = (product or {}).get("title") or event.get("summary") or label
     url = (product or {}).get("url") or event.get("source_url")
+    evidence_url = None
+    event_id = event.get("id")
+    base_url = public_app_url()
+    if base_url and event_id is not None:
+        evidence_url = f"{base_url}/changes/{event_id}"
     text = (
         f"{label}\n\n"
         f"标题：{title}\n"
         f"摘要：{event.get('summary') or ''}\n"
         f"链接：{url or ''}"
     )
-    return {
+    if evidence_url:
+        text += f"\n证据详情：{evidence_url}"
+    payload = {
         "msgtype": "text",
         "text": {"content": text},
         "event": event,
         "product": product,
     }
+    if evidence_url:
+        payload["evidence_url"] = evidence_url
+    return payload
 
 
 def enqueue_change_event_notification(

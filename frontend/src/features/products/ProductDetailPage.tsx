@@ -29,6 +29,11 @@ function availabilityText(value?: string | null) {
   return value;
 }
 
+function variantPrice(value?: number | null, fallback?: string | null, currency?: string | null) {
+  if (value !== null && value !== undefined) return `${currency || "CNY"} ${value}`;
+  return fallback || "待采集";
+}
+
 function relativeTime(value?: string | null) {
   if (!value) return "刚刚";
   const minutes = Math.max(1, Math.round((Date.now() - new Date(value).getTime()) / 60000));
@@ -39,6 +44,7 @@ function relativeTime(value?: string | null) {
 
 function eventLabel(event: ChangeEvent) {
   if (event.change_type === "new_product" || event.change_type === "product_new") return "新品上新";
+  if (event.change_type === "variant_new") return "新增变体";
   if (event.change_type === "price_changed" || event.change_type === "price_change") return "价格变化";
   if (event.change_type === "availability_changed" || event.change_type === "availability_change") return "库存变化";
   return "信息变化";
@@ -135,6 +141,64 @@ export function ProductDetailPage() {
           </div>
         </section>
       </div>
+
+      <section className="panel related-events-panel">
+        <div className="panel-heading">
+          <div>
+            <div className="panel-kicker">VERIFIED IDENTITY</div>
+            <h2>同款匹配</h2>
+          </div>
+          <span className="monitor-count">{data.matches.length} 组</span>
+        </div>
+        {data.matches.length ? data.matches.map((group) => (
+          <div className="match-group" key={group.id}>
+            <p className="table-sub">精确 {group.identifier_type.toUpperCase()}：{group.identifier_value}</p>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>站点</th><th>商品</th><th>价格</th><th>库存</th></tr></thead>
+                <tbody>{group.products.map((match) => (
+                  <tr key={match.id}>
+                    <td>{match.site_name || "未知站点"}</td>
+                    <td><a href={match.url || "#"} target="_blank" rel="noreferrer">{match.title || `#${match.id}`}</a></td>
+                    <td>{variantPrice(match.price_amount, match.price, match.currency)}</td>
+                    <td><span className="tag">{availabilityText(match.availability)}</span></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+        )) : (
+          <div className="empty-state compact"><div className="empty-icon"><Boxes size={18} /></div><p>暂未发现拥有完全相同 GTIN 或 SKU 的跨站商品。</p></div>
+        )}
+      </section>
+
+      <section className="panel related-events-panel">
+        <div className="panel-heading">
+          <div>
+            <div className="panel-kicker">VARIANTS</div>
+            <h2>颜色 / 尺码变体</h2>
+          </div>
+          <span className="monitor-count">{data.variants.length} 条</span>
+        </div>
+        {data.variants.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>变体</th><th>SKU</th><th>选项</th><th>价格</th><th>库存</th></tr></thead>
+              <tbody>{data.variants.map((variant) => (
+                <tr key={variant.id}>
+                  <td><strong>{variant.title || variant.external_id}</strong><span className="table-sub">#{variant.external_id}</span></td>
+                  <td>{variant.sku || "未采集"}</td>
+                  <td>{variant.option_values || "未采集"}</td>
+                  <td>{variantPrice(variant.price_amount, variant.price, product.currency)}<span className="table-sub">{variant.compare_at_price ? `划线价 ${variant.compare_at_price}` : ""}</span></td>
+                  <td><span className="tag">{variant.is_active ? availabilityText(variant.availability) : "已下架"}</span></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state compact"><div className="empty-icon"><Boxes size={18} /></div><p>该商品暂无可识别的变体数据</p></div>
+        )}
+      </section>
 
       <section className="panel related-events-panel">
         <div className="panel-heading">

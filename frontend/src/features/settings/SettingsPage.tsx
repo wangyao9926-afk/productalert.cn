@@ -16,7 +16,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { ApiError, getJson } from "../../api/client";
+import { apiUrl, ApiError, getJson } from "../../api/client";
 import { getCurrentUser, type AuthUser } from "../../api/auth";
 import type { SystemHealth } from "../../types/api";
 
@@ -54,8 +54,8 @@ const securitySettings = [
 ];
 
 const exportBackup = [
-  { label: "产品 CSV", href: "/api/export/products.csv", detail: "导出当前产品库" },
-  { label: "通知 CSV", href: "/api/export/notifications.csv", detail: "导出通知队列" },
+  { label: "产品 CSV", href: apiUrl("/api/export/products.csv"), detail: "导出当前产品库" },
+  { label: "通知 CSV", href: apiUrl("/api/export/notifications.csv"), detail: "导出通知队列" },
   { label: "生产备份脚本", href: "#", detail: "使用项目内 backup / restore 脚本" },
 ];
 

@@ -20,18 +20,33 @@ export type ScanJob = {
   error_message?: string | null;
 };
 
+export type OperationsSummary = {
+  scans: {
+    total: number;
+    successful: number;
+    failed: number;
+    success_rate: number | null;
+    average_duration_ms: number | null;
+  };
+  queue: { queued: number; running: number; failed: number };
+  notifications: { pending: number; sending: number; failed: number };
+  failure_categories: Array<{ category: string; count: number }>;
+};
+
 export type OperationsContext = {
   health: SystemHealth;
   scanJobs: ScanJob[];
   scanLogs: ScanLog[];
+  summary: OperationsSummary;
 };
 
 export async function loadOperationsContext(): Promise<OperationsContext> {
-  const [health, scanJobs, scanLogs] = await Promise.all([
+  const [health, scanJobs, scanLogs, summary] = await Promise.all([
     getJson<SystemHealth>("/api/system/health"),
     getJson<ScanJob[]>("/api/scan-jobs"),
     getJson<ScanLog[]>("/api/scan-logs"),
+    getJson<OperationsSummary>("/api/operations/summary"),
   ]);
 
-  return { health, scanJobs, scanLogs };
+  return { health, scanJobs, scanLogs, summary };
 }

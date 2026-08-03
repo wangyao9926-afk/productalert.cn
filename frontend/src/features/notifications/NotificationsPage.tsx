@@ -13,8 +13,8 @@ import {
   Webhook,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { ApiError } from "../../api/client";
-import { loadNotificationRules, loadNotifications, retryNotification, type NotificationRecord, type NotificationRule } from "../../api/notifications";
+import { apiUrl, ApiError } from "../../api/client";
+import { createNotificationRule, loadNotificationRules, loadNotifications, retryNotification, type NotificationRecord, type NotificationRule } from "../../api/notifications";
 import { loadOverview, type OverviewData } from "../../api/overview";
 
 const channelCards = [
@@ -25,6 +25,7 @@ const channelCards = [
 
 const eventTypeLabels: Record<string, string> = {
   product_new: "新品上新",
+  variant_new: "新增变体",
   price_change: "价格变化",
   availability_change: "库存变化",
   description_change: "信息变化",
@@ -118,6 +119,10 @@ function ruleSummary(rule: NotificationRule) {
     severity: severityLabels[rule.min_severity] || rule.min_severity,
     status: inboxStatusLabels[rule.inbox_status] || rule.inbox_status,
     channel: channelLabels[rule.channel] || rule.channel,
+    conditions: [
+      rule.max_price_amount !== null && rule.max_price_amount !== undefined ? `价格 ≤ ${rule.max_price_amount}` : "",
+      rule.require_in_stock ? "仅有货" : "",
+    ].filter(Boolean).join(" · ") || "无商品条件",
   };
 }
 
@@ -147,6 +152,12 @@ export function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [creatingRule, setCreatingRule] = useState(false);
+  const [newRuleName, setNewRuleName] = useState("新品与价格提醒");
+  const [newRuleChannel, setNewRuleChannel] = useState<"webhook" | "wecom" | "feishu">("wecom");
+  const [newRuleTarget, setNewRuleTarget] = useState("");
+  const [newRuleMaxPrice, setNewRuleMaxPrice] = useState("");
+  const [newRuleRequireInStock, setNewRuleRequireInStock] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const refresh = () => {
@@ -197,6 +208,35 @@ export function NotificationsPage() {
     }
   };
 
+  const handleCreateRule = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!newRuleTarget.trim()) {
+      setMessage({ type: "error", text: "请填写机器人 Webhook 地址。" });
+      return;
+    }
+    setCreatingRule(true);
+    setMessage(null);
+    try {
+      const created = await createNotificationRule({
+        name: newRuleName.trim() || "通知规则",
+        channel: newRuleChannel,
+        target_url: newRuleTarget.trim(),
+        event_types: ["product_new", "variant_new", "price_change", "availability_change"],
+        min_severity: "normal",
+        inbox_status: "unread",
+        max_price_amount: newRuleMaxPrice.trim() ? Number(newRuleMaxPrice) : undefined,
+        require_in_stock: newRuleRequireInStock,
+      });
+      setRules((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setNewRuleTarget("");
+      setMessage({ type: "success", text: "推送规则已创建，后续匹配事件将进入通知队列。" });
+    } catch (error) {
+      setMessage({ type: "error", text: error instanceof ApiError ? "规则创建失败，请检查机器人 Webhook 地址。" : "规则创建失败，请稍后重试。" });
+    } finally {
+      setCreatingRule(false);
+    }
+  };
+
   if (loading) {
     return <div className="page-loading"><RefreshCw size={18} className="spin" /> 正在同步通知中心...</div>;
   }
@@ -214,10 +254,25 @@ export function NotificationsPage() {
         </div>
         <div className="page-actions">
           <button className="icon-button" type="button" onClick={refresh} aria-label="刷新通知中心"><RefreshCw size={17} /></button>
-          <a className="button button-secondary" href="/api/export/notifications.csv" target="_blank" rel="noreferrer"><Download size={16} /> 导出 CSV</a>
+          <a className="button button-secondary" href={apiUrl("/api/export/notifications.csv")} target="_blank" rel="noreferrer"><Download size={16} /> 导出 CSV</a>
           <Link className="primary-button" to="/monitors/new"><BellRing size={17} /> 新建通知规则</Link>
         </div>
       </header>
+
+      <form className="panel" onSubmit={handleCreateRule}>
+        <div className="panel-heading">
+          <div><div className="panel-kicker">DELIVERY</div><h2>新建推送规则</h2></div>
+          <span className="tag">Webhook / 企业微信 / 飞书</span>
+        </div>
+        <div className="form-grid">
+          <label className="field-label">规则名称<input value={newRuleName} onChange={(event) => setNewRuleName(event.target.value)} /></label>
+          <label className="field-label">通道<select value={newRuleChannel} onChange={(event) => setNewRuleChannel(event.target.value as "webhook" | "wecom" | "feishu")}><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="webhook">通用 Webhook</option></select></label>
+          <label className="field-label">机器人 Webhook URL<input type="url" required placeholder="https://..." value={newRuleTarget} onChange={(event) => setNewRuleTarget(event.target.value)} /></label>
+          <label className="field-label">价格上限（可选）<input type="number" min="0" step="0.01" placeholder="例如 500" value={newRuleMaxPrice} onChange={(event) => setNewRuleMaxPrice(event.target.value)} /></label>
+          <label className="field-label checkbox-field"><input type="checkbox" checked={newRuleRequireInStock} onChange={(event) => setNewRuleRequireInStock(event.target.checked)} />仅在有货时通知</label>
+          <button className="primary-button" type="submit" disabled={creatingRule}>{creatingRule ? "创建中..." : "启用推送"}</button>
+        </div>
+      </form>
 
       <section className="notification-summary-grid" aria-label="通知概览">
         <NotifyMetric label="待发送" value={summary.pending} detail="等待通知 worker 发送" icon={<Clock3 size={18} />} tone="orange" />
@@ -244,6 +299,7 @@ export function NotificationsPage() {
                 <strong>{rule.name}</strong>
                 <span>事件类型：{summary.types}</span>
                 <span>严重程度：{summary.severity} 起推 · 处理状态：{summary.status}</span>
+                <span>商品条件：{summary.conditions}</span>
                 <span>渠道：{summary.channel} · {rule.enabled ? "已启用" : "已停用"}</span>
                 <span className="target-cell">{rule.site_name || "全部站点"} · {rule.target_url}</span>
               </article>

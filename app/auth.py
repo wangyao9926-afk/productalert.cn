@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 import secrets
 import time
 from collections import defaultdict
@@ -11,11 +10,11 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Cookie, Depends, Header, HTTPException, Response
 
 from app.db import execute_sql, fetchone, get_db, row_to_dict
+from app.settings import web_security_settings
 
 
 SESSION_DAYS = 30
 SESSION_COOKIE_NAME = "monitor_session"
-SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() in {"1", "true", "yes"}
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_FAILURES = 6
 _login_failures: dict[str, list[float]] = defaultdict(list)
@@ -78,19 +77,26 @@ def create_session(user_id: int) -> dict:
 
 
 def set_session_cookie(response: Response, session: dict) -> None:
+    settings = web_security_settings()
     response.set_cookie(
         SESSION_COOKIE_NAME,
         session["token"],
         httponly=True,
-        secure=SESSION_COOKIE_SECURE,
-        samesite="lax",
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
         max_age=SESSION_DAYS * 24 * 60 * 60,
         path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    settings = web_security_settings()
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path="/",
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
+    )
 
 
 def request_token(authorization: str | None, session_cookie: str | None) -> str:

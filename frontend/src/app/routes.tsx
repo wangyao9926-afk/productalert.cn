@@ -2,6 +2,7 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { ChangeDetailPage } from "../features/changes/ChangeDetailPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { InboxPage } from "../features/inbox/InboxPage";
+import { PriceMatrixPage } from "../features/intelligence/PriceMatrixPage";
 import { CreateMonitorPage } from "../features/monitors/CreateMonitorPage";
 import { MonitorsPage } from "../features/monitors/MonitorsPage";
 import { NotificationsPage } from "../features/notifications/NotificationsPage";
@@ -47,6 +48,7 @@ export function AppRoutes() {
       <Route path="/changes/:id" element={<ChangeDetailPage />} />
       <Route path="/products" element={<ProductsPage />} />
       <Route path="/products/:id" element={<ProductDetailPage />} />
+      <Route path="/price-matrix" element={<PriceMatrixPage />} />
       <Route path="/notifications" element={<NotificationsPage />} />
       <Route path="/operations" element={<OperationsPage />} />
       <Route path="/reports" element={<ReportsPage />} />

@@ -44,16 +44,20 @@ type InboxItem = {
 
 const changeTypeLabels: Record<string, string> = {
   new_product: "新品上新",
+  variant_new: "新增变体",
   price_changed: "价格变化",
   availability_changed: "库存变化",
   content_changed: "信息变化",
+  visual_change: "页面视觉变化",
 };
 
 const changeTypeIcons: Record<string, typeof PackagePlus> = {
   new_product: PackagePlus,
+  variant_new: PackagePlus,
   price_changed: Tag,
   availability_changed: Archive,
   content_changed: FileText,
+  visual_change: FileText,
 };
 
 const severityText: Record<Severity, string> = {
@@ -92,7 +96,7 @@ function relativeTime(value?: string | null) {
 }
 
 function inferSeverity(event: ChangeEvent): Severity {
-  if (event.change_type === "new_product" || event.change_type === "price_changed") return "high";
+  if (event.change_type === "new_product" || event.change_type === "variant_new" || event.change_type === "price_changed") return "high";
   if (event.change_type === "availability_changed") return "medium";
   return "low";
 }

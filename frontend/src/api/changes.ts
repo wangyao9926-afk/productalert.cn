@@ -1,4 +1,4 @@
-import { getJson } from "./client";
+import { getJson, sendJson } from "./client";
 import type { ChangeEvent, ScanLog } from "../types/api";
 
 export type SourceSnapshot = {
@@ -10,6 +10,14 @@ export type SourceSnapshot = {
   content_hash?: string | null;
   text_hash?: string | null;
   extracted_text?: string | null;
+  capture_method?: "http" | "browser_render" | string | null;
+  http_status?: number | null;
+  content_type?: string | null;
+  content_length?: number | null;
+  screenshot_hash?: string | null;
+  screenshot_url?: string | null;
+  visual_change_ratio?: number | null;
+  screenshot_error?: string | null;
 };
 
 export type ChangeDiffItem = {
@@ -63,4 +71,17 @@ export function loadChangeEvents(filters: ChangeEventFilters = {}): Promise<Chan
 
 export function loadChangeDetail(id: number | string): Promise<ChangeDetail> {
   return getJson<ChangeDetail>(`/api/change-events/${id}`);
+}
+
+export type EventSuppressionRule = {
+  id: number;
+  site_id: number;
+  source_id: number;
+  change_type: string;
+  reason?: string | null;
+  enabled: boolean;
+};
+
+export function suppressSimilarChangeEvents(eventId: number | string, reason: string): Promise<EventSuppressionRule> {
+  return sendJson<EventSuppressionRule>(`/api/change-events/${eventId}/suppress-similar`, { reason });
 }

@@ -4,9 +4,12 @@ import asyncio
 import csv
 import io
 import json
+from datetime import datetime
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -26,15 +29,27 @@ from app.auth import (
     verify_password,
 )
 from app.db import ROOT, assignment_list, execute_sql, fetchall, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict, select_by_id, update_by_id
+from app.evidence_store import evidence_path
 from app.monitor import create_site, create_source, scan_site, scan_source, scheduler_loop
 from app.notifier import notification_worker_loop, process_pending_notifications
-from app.settings import database_settings, queue_settings, runtime_settings
+from app.settings import database_settings, production_web_configuration_errors, queue_settings, runtime_settings, web_security_settings
 from app.task_queue import enqueue_site_scan, enqueue_source_scan, queue_backend_name, scan_worker_loop
 from app.url_safety import UnsafeUrlError, validate_public_http_url
 
 
 app = FastAPI(title="官网新品情报监控系统")
 STATIC_DIR = ROOT / "static"
+web_security = web_security_settings()
+web_configuration_errors = production_web_configuration_errors(web_security)
+if web_configuration_errors:
+    raise RuntimeError("Invalid production web configuration: " + "; ".join(web_configuration_errors))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(web_security.allowed_origins),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 SourceType = Literal["homepage", "sitemap", "rss", "listing_page", "news_page", "custom_page"]
 SeverityLevel = Literal["low", "normal", "high", "critical"]
@@ -42,6 +57,7 @@ InboxStatus = Literal["unread", "important", "read", "false_positive", "follow_u
 NotificationChannel = Literal["webhook", "email", "wecom", "feishu"]
 NotificationEvent = Literal[
     "product_new",
+    "variant_new",
     "price_change",
     "availability_change",
     "description_change",
@@ -98,6 +114,8 @@ class NotificationRuleCreate(BaseModel):
     event_types: list[NotificationEvent] = Field(default_factory=lambda: ["product_new"])
     min_severity: SeverityLevel = "normal"
     inbox_status: InboxStatus = "unread"
+    max_price_amount: float | None = Field(default=None, ge=0)
+    require_in_stock: bool = False
     enabled: bool = True
 
 
@@ -106,6 +124,10 @@ class InboxStatusUpdate(BaseModel):
     assignee: str | None = Field(default=None, max_length=120)
     review_note: str | None = Field(default=None, max_length=1000)
     false_positive_reason: str | None = Field(default=None, max_length=500)
+
+
+class EventSuppressionCreate(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class UserCredentials(BaseModel):
@@ -155,6 +177,109 @@ async def system_ping() -> dict:
     return {"ok": True}
 
 
+def parse_observability_time(value: str | datetime | None) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def classify_scan_failure(message: str | None) -> str:
+    text = (message or "").lower()
+    if "403" in text or "forbidden" in text or "access denied" in text or "blocked" in text:
+        return "access_denied"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "render" in text or "playwright" in text:
+        return "render_failed"
+    if "selector" in text or "field missing" in text:
+        return "field_missing"
+    if "404" in text or "not found" in text:
+        return "not_found"
+    return "unknown"
+
+
+@app.get("/api/operations/summary")
+async def operations_summary(user: dict = CurrentUser) -> dict:
+    with get_db() as db:
+        scan_rows = fetchall(
+            db,
+            """
+            SELECT scan_logs.status, scan_logs.started_at, scan_logs.finished_at, scan_logs.message
+            FROM scan_logs
+            JOIN sites ON sites.id = scan_logs.site_id
+            WHERE sites.user_id = ?
+            ORDER BY scan_logs.started_at DESC, scan_logs.id DESC
+            LIMIT 100
+            """,
+            (user["id"],),
+        )
+        job_rows = fetchall(
+            db,
+            """
+            SELECT scan_jobs.status
+            FROM scan_jobs
+            JOIN sites ON sites.id = scan_jobs.site_id
+            WHERE sites.user_id = ?
+            """,
+            (user["id"],),
+        )
+        notification_rows = fetchall(
+            db,
+            """
+            SELECT notification_outbox.status
+            FROM notification_outbox
+            JOIN sites ON sites.id = notification_outbox.site_id
+            WHERE sites.user_id = ?
+            """,
+            (user["id"],),
+        )
+
+    scans = [row_to_dict(row) for row in scan_rows]
+    successful = sum(1 for row in scans if row["status"] == "success")
+    failed_rows = [row for row in scans if row["status"] != "success"]
+    durations = []
+    for row in scans:
+        started_at = parse_observability_time(row.get("started_at"))
+        finished_at = parse_observability_time(row.get("finished_at"))
+        if started_at and finished_at:
+            durations.append(round((finished_at - started_at).total_seconds() * 1000))
+    categories: dict[str, int] = {}
+    for row in failed_rows:
+        category = classify_scan_failure(row.get("message"))
+        categories[category] = categories.get(category, 0) + 1
+
+    job_statuses = [row_to_dict(row).get("status") for row in job_rows]
+    notification_statuses = [row_to_dict(row).get("status") for row in notification_rows]
+    return {
+        "scans": {
+            "total": len(scans),
+            "successful": successful,
+            "failed": len(failed_rows),
+            "success_rate": round(successful / len(scans), 4) if scans else None,
+            "average_duration_ms": round(sum(durations) / len(durations)) if durations else None,
+        },
+        "queue": {
+            "queued": sum(1 for status in job_statuses if status == "queued"),
+            "running": sum(1 for status in job_statuses if status == "running"),
+            "failed": sum(1 for status in job_statuses if status == "failed"),
+        },
+        "notifications": {
+            "pending": sum(1 for status in notification_statuses if status == "pending"),
+            "sending": sum(1 for status in notification_statuses if status == "sending"),
+            "failed": sum(1 for status in notification_statuses if status == "failed"),
+        },
+        "failure_categories": [
+            {"category": category, "count": count}
+            for category, count in sorted(categories.items(), key=lambda item: (-item[1], item[0]))
+        ],
+    }
+
+
 def load_sources_by_site() -> dict[int, list[dict]]:
     with get_db() as db:
         rows = fetchall(
@@ -186,7 +311,40 @@ def snapshot_detail(db, snapshot_id: int | None) -> dict | None:
     if not snapshot_id:
         return None
     row = fetchone(db, "SELECT * FROM source_snapshots WHERE id = ?", (snapshot_id,))
-    return row_to_dict(row) if row else None
+    if not row:
+        return None
+    detail = row_to_dict(row)
+    if detail.get("screenshot_path"):
+        detail["screenshot_url"] = f"/api/source-snapshots/{detail['id']}/screenshot"
+    else:
+        detail["screenshot_url"] = None
+    detail.pop("screenshot_path", None)
+    return detail
+
+
+@app.get("/api/source-snapshots/{snapshot_id}/screenshot")
+async def get_snapshot_screenshot(snapshot_id: int, user: dict = CurrentUser):
+    with get_db() as db:
+        snapshot = fetchone(
+            db,
+            """
+            SELECT source_snapshots.screenshot_path
+            FROM source_snapshots
+            JOIN monitor_sources ON monitor_sources.id = source_snapshots.source_id
+            JOIN sites ON sites.id = monitor_sources.site_id
+            WHERE source_snapshots.id = ? AND sites.user_id = ?
+            """,
+            (snapshot_id, user["id"]),
+        )
+    if not snapshot or not snapshot["screenshot_path"]:
+        raise HTTPException(status_code=404, detail="Screenshot evidence not found")
+    try:
+        screenshot_file = evidence_path(snapshot["screenshot_path"])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Screenshot evidence not found") from exc
+    if not screenshot_file.is_file():
+        raise HTTPException(status_code=404, detail="Screenshot evidence not found")
+    return FileResponse(screenshot_file, media_type="image/png")
 
 
 def csv_response(filename: str, fieldnames: list[str], rows: list[dict]) -> Response:
@@ -511,6 +669,155 @@ async def update_product_inbox_status(product_id: int, payload: InboxStatusUpdat
     return row_to_dict(product)
 
 
+@app.get("/api/products/{product_id}/variants")
+async def list_product_variants(product_id: int, user: dict = CurrentUser) -> list[dict]:
+    with get_db() as db:
+        product = fetchone(
+            db,
+            """
+            SELECT products.id
+            FROM products
+            JOIN sites ON sites.id = products.site_id
+            WHERE products.id = ? AND sites.user_id = ?
+            """,
+            (product_id, user["id"]),
+        )
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        rows = fetchall(
+            db,
+            """
+            SELECT * FROM product_variants
+            WHERE product_id = ?
+            ORDER BY is_active DESC, availability = 'in_stock' DESC, price_amount ASC, id ASC
+            """,
+            (product_id,),
+        )
+    return [row_to_dict(row) for row in rows]
+
+
+@app.get("/api/products/{product_id}/matches")
+async def list_product_matches(product_id: int, user: dict = CurrentUser) -> list[dict]:
+    with get_db() as db:
+        owned_product = fetchone(
+            db,
+            """
+            SELECT products.id
+            FROM products
+            JOIN sites ON sites.id = products.site_id
+            WHERE products.id = ? AND sites.user_id = ?
+            """,
+            (product_id, user["id"]),
+        )
+        if not owned_product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        rows = fetchall(
+            db,
+            """
+            SELECT
+                product_match_groups.id AS group_id,
+                product_match_groups.identifier_type,
+                product_match_groups.normalized_value AS identifier_value,
+                products.id AS product_id,
+                products.title AS product_title,
+                products.url AS product_url,
+                products.price,
+                products.price_amount,
+                products.currency,
+                products.availability,
+                sites.id AS site_id,
+                sites.name AS site_name
+            FROM product_match_members own_members
+            JOIN product_match_groups ON product_match_groups.id = own_members.group_id
+            JOIN product_match_members group_members ON group_members.group_id = product_match_groups.id
+            JOIN products ON products.id = group_members.product_id
+            JOIN sites ON sites.id = products.site_id
+            WHERE own_members.product_id = ?
+              AND product_match_groups.user_id = ?
+            ORDER BY product_match_groups.id, sites.name, products.id
+            """,
+            (product_id, user["id"]),
+        )
+    groups: dict[int, dict] = {}
+    for row in rows:
+        group_id = row["group_id"]
+        group = groups.setdefault(
+            group_id,
+            {"id": group_id, "identifier_type": row["identifier_type"], "identifier_value": row["identifier_value"], "products": []},
+        )
+        group["products"].append(
+            {
+                "id": row["product_id"],
+                "title": row["product_title"],
+                "url": row["product_url"],
+                "price": row["price"],
+                "price_amount": row["price_amount"],
+                "currency": row["currency"],
+                "availability": row["availability"],
+                "site_id": row["site_id"],
+                "site_name": row["site_name"],
+            }
+        )
+    return list(groups.values())
+
+
+@app.get("/api/product-match-groups")
+async def list_product_match_groups(user: dict = CurrentUser) -> list[dict]:
+    """Return only exact, cross-site identity matches owned by the current user."""
+    with get_db() as db:
+        rows = fetchall(
+            db,
+            """
+            SELECT
+                product_match_groups.id AS group_id,
+                product_match_groups.identifier_type,
+                product_match_groups.normalized_value AS identifier_value,
+                products.id AS product_id,
+                products.title AS product_title,
+                products.url AS product_url,
+                products.price,
+                products.price_amount,
+                products.currency,
+                products.availability,
+                sites.id AS site_id,
+                sites.name AS site_name
+            FROM product_match_groups
+            JOIN product_match_members ON product_match_members.group_id = product_match_groups.id
+            JOIN products ON products.id = product_match_members.product_id
+            JOIN sites ON sites.id = products.site_id
+            WHERE product_match_groups.user_id = ?
+            ORDER BY product_match_groups.id DESC, sites.name, products.id
+            """,
+            (user["id"],),
+        )
+    groups: dict[int, dict] = {}
+    for row in rows:
+        group_id = row["group_id"]
+        group = groups.setdefault(
+            group_id,
+            {
+                "id": group_id,
+                "identifier_type": row["identifier_type"],
+                "identifier_value": row["identifier_value"],
+                "products": [],
+            },
+        )
+        group["products"].append(
+            {
+                "id": row["product_id"],
+                "title": row["product_title"],
+                "url": row["product_url"],
+                "price": row["price"],
+                "price_amount": row["price_amount"],
+                "currency": row["currency"],
+                "availability": row["availability"],
+                "site_id": row["site_id"],
+                "site_name": row["site_name"],
+            }
+        )
+    return list(groups.values())
+
+
 @app.patch("/api/change-events/{event_id}/inbox-status")
 async def update_change_event_inbox_status(event_id: int, payload: InboxStatusUpdate, user: dict = CurrentUser) -> dict:
     with get_db() as db:
@@ -548,6 +855,63 @@ async def update_change_event_inbox_status(event_id: int, payload: InboxStatusUp
     if not event:
         raise HTTPException(status_code=404, detail="变化事件不存在")
     return row_to_dict(event)
+
+
+@app.get("/api/event-suppression-rules")
+async def list_event_suppression_rules(user: dict = CurrentUser) -> list[dict]:
+    with get_db() as db:
+        rows = fetchall(
+            db,
+            """
+            SELECT event_suppression_rules.*, sites.name AS site_name, monitor_sources.url AS source_url
+            FROM event_suppression_rules
+            JOIN sites ON sites.id = event_suppression_rules.site_id
+            JOIN monitor_sources ON monitor_sources.id = event_suppression_rules.source_id
+            WHERE sites.user_id = ?
+            ORDER BY event_suppression_rules.created_at DESC, event_suppression_rules.id DESC
+            """,
+            (user["id"],),
+        )
+    return [row_to_dict(row) for row in rows]
+
+
+@app.post("/api/change-events/{event_id}/suppress-similar")
+async def suppress_similar_change_events(event_id: int, payload: EventSuppressionCreate, user: dict = CurrentUser) -> dict:
+    with get_db() as db:
+        event = fetchone(
+            db,
+            """
+            SELECT change_events.id, change_events.site_id, change_events.source_id, change_events.change_type
+            FROM change_events
+            JOIN sites ON sites.id = change_events.site_id
+            WHERE change_events.id = ? AND sites.user_id = ?
+            """,
+            (event_id, user["id"]),
+        )
+        if not event:
+            raise HTTPException(status_code=404, detail="Change event not found")
+        existing = fetchone(
+            db,
+            "SELECT * FROM event_suppression_rules WHERE source_id = ? AND change_type = ?",
+            (event["source_id"], event["change_type"]),
+        )
+        if existing:
+            update_by_id(db, "event_suppression_rules", existing["id"], {"reason": payload.reason, "enabled": True})
+            rule = fetchone(db, "SELECT * FROM event_suppression_rules WHERE id = ?", (existing["id"],))
+        else:
+            rule_id = insert_row(
+                db,
+                "event_suppression_rules",
+                {
+                    "site_id": event["site_id"],
+                    "source_id": event["source_id"],
+                    "change_type": event["change_type"],
+                    "reason": payload.reason,
+                    "enabled": True,
+                },
+            )
+            rule = fetchone(db, "SELECT * FROM event_suppression_rules WHERE id = ?", (rule_id,))
+    return row_to_dict(rule)
 
 
 @app.post("/api/sites/{site_id}/scan")
@@ -771,6 +1135,7 @@ async def list_audit_logs(site_id: int | None = None, user: dict = CurrentUser) 
 def normalize_notification_rule(row: dict) -> dict:
     rule = row_to_dict(row)
     rule["enabled"] = bool(rule.get("enabled"))
+    rule["require_in_stock"] = bool(rule.get("require_in_stock"))
     if not rule.get("event_types"):
         rule["event_types"] = ["product_new"]
     return rule
@@ -802,6 +1167,14 @@ async def list_notification_rules(site_id: int | None = None, user: dict = Curre
 async def create_notification_rule(payload: NotificationRuleCreate, user: dict = CurrentUser) -> dict:
     if not payload.event_types:
         raise HTTPException(status_code=400, detail="通知规则至少需要一个事件类型")
+    if payload.channel == "email":
+        raise HTTPException(status_code=400, detail="邮件通道尚未接入真实发件服务，请使用 Webhook、企业微信或飞书")
+    if payload.channel not in {"webhook", "wecom", "feishu"}:
+        raise HTTPException(status_code=400, detail="不支持的通知通道")
+    parsed_target = urlparse(payload.target_url)
+    if parsed_target.scheme not in {"http", "https"} or not parsed_target.hostname:
+        raise HTTPException(status_code=400, detail="机器人地址必须是有效的 HTTP(S) URL")
+    target_url = payload.target_url
 
     with get_db() as db:
         if payload.site_id is not None:
@@ -816,10 +1189,12 @@ async def create_notification_rule(payload: NotificationRuleCreate, user: dict =
                 "site_id": payload.site_id,
                 "name": payload.name,
                 "channel": payload.channel,
-                "target_url": payload.target_url,
+                "target_url": target_url,
                 "event_types": json_dumps(payload.event_types),
                 "min_severity": payload.min_severity,
                 "inbox_status": payload.inbox_status,
+                "max_price_amount": payload.max_price_amount,
+                "require_in_stock": payload.require_in_stock,
                 "enabled": payload.enabled,
             },
         )
@@ -849,6 +1224,8 @@ async def create_notification_rule(payload: NotificationRuleCreate, user: dict =
             "event_types": payload.event_types,
             "min_severity": payload.min_severity,
             "inbox_status": payload.inbox_status,
+            "max_price_amount": payload.max_price_amount,
+            "require_in_stock": payload.require_in_stock,
         },
     )
     return normalize_notification_rule(row)

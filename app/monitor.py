@@ -276,11 +276,11 @@ def enqueue_event_notification_if_enabled(
     severity_rank = {"low": 0, "normal": 1, "high": 2, "critical": 3}
     matching_rules = fetchall(
         db,
-        """
+        f"""
         SELECT notification_rules.*
         FROM notification_rules
         JOIN sites ON sites.user_id = notification_rules.user_id
-        WHERE notification_rules.enabled = 1
+        WHERE {boolean_true_sql(DB_BACKEND, "notification_rules.enabled")}
           AND sites.id = ?
           AND (notification_rules.site_id = ? OR notification_rules.site_id IS NULL)
         """,

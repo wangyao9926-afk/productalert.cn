@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.db import execute_sql, get_db, init_db, insert_row
+from app.db import execute_sql, get_db, init_db, insert_row, json_dumps
 from app.main import app, parse_observability_time
 
 
@@ -82,7 +82,7 @@ class OperationsSummaryApiTests(unittest.TestCase):
                             "site_id": site_id,
                             "channel": "webhook",
                             "target_url": f"https://hooks-{marker}.example.com/{status}",
-                            "payload_json": "{}",
+                            "payload": json_dumps({}),
                             "status": status,
                         },
                     )

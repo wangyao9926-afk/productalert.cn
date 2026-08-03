@@ -65,6 +65,11 @@ NotificationEvent = Literal[
 ]
 
 
+def api_price_amount(value: object) -> float | None:
+    """Return database numeric values as JSON numbers across supported backends."""
+    return float(value) if value is not None else None
+
+
 class SiteCreate(BaseModel):
     name: str = Field(default="", max_length=120)
     url: str = Field(min_length=3, max_length=500)
@@ -751,7 +756,7 @@ async def list_product_matches(product_id: int, user: dict = CurrentUser) -> lis
                 "title": row["product_title"],
                 "url": row["product_url"],
                 "price": row["price"],
-                "price_amount": row["price_amount"],
+                "price_amount": api_price_amount(row["price_amount"]),
                 "currency": row["currency"],
                 "availability": row["availability"],
                 "site_id": row["site_id"],
@@ -808,7 +813,7 @@ async def list_product_match_groups(user: dict = CurrentUser) -> list[dict]:
                 "title": row["product_title"],
                 "url": row["product_url"],
                 "price": row["price"],
-                "price_amount": row["price_amount"],
+                "price_amount": api_price_amount(row["price_amount"]),
                 "currency": row["currency"],
                 "availability": row["availability"],
                 "site_id": row["site_id"],

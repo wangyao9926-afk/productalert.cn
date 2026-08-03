@@ -77,6 +77,16 @@ def queue_settings() -> QueueSettings:
     return QueueSettings(backend=backend, redis_url=redis_url)
 
 
+def public_app_url() -> str | None:
+    raw_url = os.getenv("APP_PUBLIC_URL", "").strip()
+    if not raw_url:
+        return None
+    parsed = urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    return raw_url.rstrip("/")
+
+
 def env_bool(name: str, default: bool) -> bool:
     raw_value = os.getenv(name, str(default).lower()).strip().lower()
     return raw_value in {"1", "true", "yes", "on"}

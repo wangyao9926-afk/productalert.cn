@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from uuid import uuid4
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from app.db import execute_sql, get_db, init_db, insert_row, json_dumps
+from app.crawler import ExtractedProduct, ProductCandidate
+from app.db import execute_sql, fetchall, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict
 from app.main import app
+from app.monitor import create_scan_job, scan_site
 
 
 class BaselineScanProgressApiTests(unittest.TestCase):
@@ -97,6 +101,88 @@ class BaselineScanProgressApiTests(unittest.TestCase):
         finally:
             with get_db() as db:
                 execute_sql(db, "DELETE FROM users WHERE email IN (?, ?)", (owner_email, other_email))
+
+
+class BaselineScanProgressRuntimeTests(unittest.TestCase):
+    def test_first_baseline_records_products_without_new_product_events(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        owner_email = f"baseline-runtime-{marker}@monitor.internal"
+        client = TestClient(app)
+        try:
+            registered = client.post("/api/auth/register", json={"email": owner_email, "password": "test-password-123"})
+            self.assertEqual(registered.status_code, 200, registered.text)
+            owner_id = registered.json()["user"]["id"]
+            site_url = f"https://baseline-runtime-{marker}.example.com"
+            with get_db() as db:
+                site_id = insert_row(
+                    db,
+                    "sites",
+                    {
+                        "user_id": owner_id,
+                        "name": "Baseline runtime site",
+                        "url": site_url,
+                        "scan_interval_minutes": 60,
+                        "notification_events": json_dumps(["product_new"]),
+                    },
+                )
+                insert_row(
+                    db,
+                    "monitor_sources",
+                    {
+                        "site_id": site_id,
+                        "source_type": "homepage",
+                        "url": site_url,
+                        "scan_interval_minutes": 60,
+                    },
+                )
+            job_id = create_scan_job(site_id, None, "site_scan", "baseline")
+            candidates = [
+                ProductCandidate(url=f"{site_url}/products/first", title_hint="First product"),
+                ProductCandidate(url=f"{site_url}/products/second", title_hint="Second product"),
+            ]
+            extracted_products = [
+                ExtractedProduct(
+                    url=candidate.url,
+                    title=candidate.title_hint or "Product",
+                    description="Baseline product",
+                    image_url=None,
+                    price="$19.99",
+                    price_amount=19.99,
+                    currency="USD",
+                    compare_at_price=None,
+                    availability="in_stock",
+                    variant_count=1,
+                    variants=[],
+                    features=["Water resistant"],
+                    extraction_source="test",
+                    confidence_score=0.95,
+                    field_confidence={"price": 1.0},
+                    confidence_reasons=[],
+                    content_hash=f"hash-{index}",
+                    raw_text="Baseline product",
+                )
+                for index, candidate in enumerate(candidates)
+            ]
+
+            with (
+                patch("app.monitor.discover_candidates", new=AsyncMock(return_value=candidates)),
+                patch("app.monitor.capture_source_snapshot", new=AsyncMock(return_value=None)),
+                patch("app.monitor.extract_candidate_product", new=AsyncMock(side_effect=extracted_products)),
+            ):
+                result = asyncio.run(scan_site(site_id, notify=True, trigger_type="baseline", job_id=job_id))
+
+            with get_db() as db:
+                job = row_to_dict(fetchone(db, "SELECT * FROM scan_jobs WHERE id = ?", (job_id,)))
+                events = fetchall(db, "SELECT * FROM change_events WHERE site_id = ?", (site_id,))
+
+            self.assertEqual(result["checked"], 2)
+            self.assertTrue(job["result"]["progress"]["baseline_completed"])
+            self.assertEqual(job["result"]["progress"]["product_count"], 2)
+            self.assertEqual(events, [])
+        finally:
+            with get_db() as db:
+                execute_sql(db, "DELETE FROM users WHERE email = ?", (owner_email,))
 
 
 if __name__ == "__main__":

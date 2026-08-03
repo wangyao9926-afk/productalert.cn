@@ -152,6 +152,7 @@ def update_scan_job_progress(
         update_by_id(
             db,
             "scan_jobs",
+            job_id,
             {
                 "candidates_count": discovered_count,
                 "error_count": failed_count,
@@ -984,6 +985,8 @@ async def scan_source(
     trigger_type: str = "manual",
     parent_job_id: int | None = None,
     job_id: int | None = None,
+    progress_job_id: int | None = None,
+    progress_state: dict[str, int] | None = None,
 ) -> dict:
     started_at = now_iso()
     notification_events_column = storage_column("notification_events")
@@ -1022,11 +1025,32 @@ async def scan_source(
         finish_scan_job(job_id, "failed", error_count=1, message="鐩戞帶婧愭湭鍚敤")
         raise ValueError("鐩戞帶婧愭湭鍚敤")
 
+    local_progress = {"discovered_count": 0, "processed_count": 0, "failed_count": 0}
+
+    def report_progress(phase: str, message: str, product_count: int | None = None) -> None:
+        update_scan_job_progress(
+            job_id,
+            phase=phase,
+            product_count=product_count,
+            message=message,
+            **local_progress,
+        )
+        if progress_job_id is not None and progress_job_id != job_id:
+            parent_progress = progress_state or local_progress
+            update_scan_job_progress(
+                progress_job_id,
+                phase=phase,
+                product_count=product_count,
+                message=message,
+                **parent_progress,
+            )
+
     use_sitemap, require_relevance = source_scan_strategy(source_data["source_type"])
     include_keywords = split_keywords(source_data.get("include_keywords"))
     exclude_keywords = split_keywords(source_data.get("exclude_keywords"))
 
     try:
+        report_progress("discovering", "正在发现商品链接")
         candidates = await discover_candidates(
             source_data["url"],
             include_keywords=include_keywords,
@@ -1035,6 +1059,10 @@ async def scan_source(
             require_relevance=require_relevance,
             selector=source_data.get("selector"),
         )
+        local_progress["discovered_count"] = len(candidates)
+        if progress_state is not None:
+            progress_state["discovered_count"] += len(candidates)
+        report_progress("extracting_products", f"已发现 {len(candidates)} 个商品链接，正在提取商品信息")
 
         baseline_mode = not source_data.get("baseline_completed_at")
         product_baseline_mode = not source_data.get("product_baseline_completed_at")
@@ -1066,14 +1094,25 @@ async def scan_source(
                         (source_id, candidate.url, candidate.title_hint),
                     )
             for candidate in candidates:
-                saved = await extract_and_store_product(
-                    candidate,
-                    source_data,
-                    source_id,
-                    "baseline",
-                    notify=False,
-                    record_changes=False,
-                )
+                try:
+                    saved = await extract_and_store_product(
+                        candidate,
+                        source_data,
+                        source_id,
+                        "baseline",
+                        notify=False,
+                        record_changes=False,
+                    )
+                except Exception:
+                    local_progress["failed_count"] += 1
+                    if progress_state is not None:
+                        progress_state["failed_count"] += 1
+                    saved = None
+                finally:
+                    local_progress["processed_count"] += 1
+                    if progress_state is not None:
+                        progress_state["processed_count"] += 1
+                    report_progress("extracting_products", "正在提取商品信息")
                 if saved:
                     baseline_products.append(saved)
             with get_db() as db:
@@ -1112,11 +1151,17 @@ async def scan_source(
                 )
             update_site_status(source_data["site_id"], status)
             mode = "baseline" if baseline_mode else "product_baseline"
+            baseline_completed = total_products > 0
+            job_status = "success"
+            if not baseline_completed:
+                job_status = "failed"
+            elif local_progress["failed_count"]:
+                job_status = "partial_success"
             create_scan_log(
                 source_data["site_id"],
                 source_id,
                 started_at,
-                "success",
+                job_status,
                 mode,
                 len(candidates),
                 0,
@@ -1131,12 +1176,20 @@ async def scan_source(
                 "snapshot": snapshot_result,
                 "baseline_products": baseline_products,
                 "new_products": [],
+                "status": job_status,
+                "progress": {
+                    "phase": "completed" if job_status == "success" else job_status,
+                    **local_progress,
+                    "product_count": total_products,
+                    "baseline_completed": baseline_completed,
+                },
             }
             finish_scan_job(
                 job_id,
-                "success",
+                job_status,
                 candidates_count=len(candidates),
                 new_count=0,
+                error_count=local_progress["failed_count"],
                 message=status,
                 result=result,
             )
@@ -1163,14 +1216,25 @@ async def scan_source(
             else:
                 discovery_status = "new"
 
-            saved = await extract_and_store_product(
-                candidate,
-                source_data,
-                source_id,
-                discovery_status,
-                notify=notify,
-                record_changes=True,
-            )
+            try:
+                saved = await extract_and_store_product(
+                    candidate,
+                    source_data,
+                    source_id,
+                    discovery_status,
+                    notify=notify,
+                    record_changes=True,
+                )
+            except Exception:
+                local_progress["failed_count"] += 1
+                if progress_state is not None:
+                    progress_state["failed_count"] += 1
+                saved = None
+            finally:
+                local_progress["processed_count"] += 1
+                if progress_state is not None:
+                    progress_state["processed_count"] += 1
+                report_progress("extracting_products", "正在提取商品信息")
             if saved:
                 inserted.append(saved)
 
@@ -1198,18 +1262,30 @@ async def scan_source(
             "snapshot": snapshot_result,
             "baseline_products": baseline_inserted,
             "new_products": new_inserted,
+            "status": "partial_success" if local_progress["failed_count"] else "success",
+            "progress": {
+                "phase": "partial_success" if local_progress["failed_count"] else "completed",
+                **local_progress,
+                "product_count": None,
+                "baseline_completed": False,
+            },
         }
         finish_scan_job(
             job_id,
-            "success",
+            result["status"],
             candidates_count=len(candidates),
             new_count=len(new_inserted),
+            error_count=local_progress["failed_count"],
             message=status,
             result=result,
         )
         return result
     except Exception as exc:
         message = f"妫€鏌ュけ璐ワ細{exc}"
+        local_progress["failed_count"] += 1
+        if progress_state is not None:
+            progress_state["failed_count"] += 1
+        report_progress("failed", message)
         failure_count = mark_source_scan_failure(source_id, message)
         update_site_status(source_data["site_id"], message)
         create_scan_log(
@@ -1282,6 +1358,14 @@ async def scan_site(site_id: int, notify: bool = True, trigger_type: str = "manu
             "errors": [],
             "status": "skipped",
         }
+    progress_state = {"discovered_count": 0, "processed_count": 0, "failed_count": 0}
+    update_scan_job_progress(
+        job_id,
+        phase="discovering",
+        product_count=None,
+        message="正在发现商品链接",
+        **progress_state,
+    )
     results = []
     errors = []
     new_products = []
@@ -1293,6 +1377,8 @@ async def scan_site(site_id: int, notify: bool = True, trigger_type: str = "manu
                 notify=notify,
                 trigger_type=trigger_type,
                 parent_job_id=job_id,
+                progress_job_id=job_id,
+                progress_state=progress_state,
             )
             results.append(result)
             checked += result["checked"]
@@ -1300,11 +1386,25 @@ async def scan_site(site_id: int, notify: bool = True, trigger_type: str = "manu
         except Exception as exc:
             errors.append({"source_id": source["id"], "message": str(exc)})
 
+    with get_db() as db:
+        product_count = fetchone(
+            db,
+            """
+            SELECT COUNT(*) AS count
+            FROM products
+            WHERE site_id = ?
+              AND item_type = 'product_detail'
+              AND review_status != 'false_positive'
+            """,
+            (site_id,),
+        )["count"]
+    baseline_completed = product_count > 0
+    source_failed = any(item.get("status") == "failed" for item in results)
     status = "success"
-    if errors and results:
-        status = "partial"
-    elif errors and not results:
+    if not baseline_completed and trigger_type == "baseline":
         status = "failed"
+    elif errors or source_failed or progress_state["failed_count"]:
+        status = "partial_success" if product_count else "failed"
     result = {
         "site_id": site_id,
         "job_id": job_id,
@@ -1312,13 +1412,19 @@ async def scan_site(site_id: int, notify: bool = True, trigger_type: str = "manu
         "new_products": new_products,
         "sources": results,
         "errors": errors,
+        "progress": {
+            "phase": "completed" if status == "success" else status,
+            **progress_state,
+            "product_count": product_count,
+            "baseline_completed": baseline_completed,
+        },
     }
     finish_scan_job(
         job_id,
         status,
         candidates_count=checked,
         new_count=len(new_products),
-        error_count=len(errors),
+        error_count=progress_state["failed_count"] + len(errors),
         message=f"\u626b\u63cf\u5b8c\u6210\uff1a{len(results)} \u4e2a\u91c7\u96c6\u6e90\u6210\u529f\uff0c{len(errors)} \u4e2a\u5931\u8d25",
         result=result,
     )

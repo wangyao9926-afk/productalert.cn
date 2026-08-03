@@ -106,7 +106,7 @@ for (const text of ["新建监控", "目标 URL", "新品上新", "价格变化"
 }
 
 const monitorApi = read("src/api/monitors.ts");
-for (const text of ["createMonitorAndStartBaseline", "getScanJob", "triggerSiteScan", "updateSiteEnabled", "/api/sites", "/scan", "/api/scan-jobs", "notification_events"]) {
+for (const text of ["createMonitorAndStartBaseline", "getScanJob", "triggerSiteScan", "updateSiteEnabled", "deleteSite", "/api/sites", "/scan", "/api/scan-jobs", "notification_events"]) {
   assert(monitorApi.includes(text), `Monitor API client is missing required text: ${text}`);
 }
 
@@ -117,6 +117,10 @@ for (const text of ["setInterval", "已发现", "已处理", "查看产品库", 
 const createMonitorPage = read("src/features/monitors/CreateMonitorPage.tsx");
 assert(createMonitorPage.includes("createMonitorAndStartBaseline"), "Create Monitor Page must start the baseline scan");
 assert(createMonitorPage.includes("/baseline/"), "Create Monitor Page must navigate to baseline progress");
+const monitorsPage = read("src/features/monitors/MonitorsPage.tsx");
+for (const text of ["deleteSite", "window.confirm", "删除监控", "Trash2"]) {
+  assert(monitorsPage.includes(text), `Monitor Center is missing safe delete support: ${text}`);
+}
 
 const notificationsApi = read("src/api/notifications.ts");
 for (const text of ["loadNotifications", "retryNotification", "/api/notifications", "/retry", "NotificationRecord"]) {

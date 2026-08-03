@@ -1,4 +1,4 @@
-import { getJson, patchJson, sendJson } from "./client";
+import { deleteJson, getJson, patchJson, sendJson } from "./client";
 import type { Site } from "../types/api";
 
 type NotificationEvent = "product_new" | "variant_new" | "price_change" | "availability_change" | "description_change" | "text_change";
@@ -99,4 +99,8 @@ export function getScanJob(jobId: number | string): Promise<ScanJob> {
 
 export function updateSiteEnabled(siteId: number, enabled: boolean): Promise<Site> {
   return patchJson<Site>(`/api/sites/${siteId}`, { enabled });
+}
+
+export function deleteSite(siteId: number): Promise<{ ok: boolean }> {
+  return deleteJson<{ ok: boolean }>(`/api/sites/${siteId}`);
 }

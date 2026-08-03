@@ -12,11 +12,12 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   Zap,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../api/client";
-import { triggerSiteScan, updateSiteEnabled } from "../../api/monitors";
+import { deleteSite, triggerSiteScan, updateSiteEnabled } from "../../api/monitors";
 import { loadOverview, type OverviewData } from "../../api/overview";
 
 type MonitorStatus = "healthy" | "warning" | "paused";
@@ -36,7 +37,7 @@ type MonitorRow = {
 
 type ActionState = {
   id: number | null;
-  kind: "scan" | "toggle" | null;
+  kind: "scan" | "toggle" | "delete" | null;
   message: string;
   tone: "success" | "error" | "idle";
 };
@@ -146,6 +147,19 @@ export function MonitorsPage() {
     }
   };
 
+  const removeMonitor = async (row: MonitorRow) => {
+    const confirmed = window.confirm(`删除监控“${row.name}”？此操作会一并删除产品、扫描记录和变化记录，且无法恢复。`);
+    if (!confirmed) return;
+    setAction({ id: row.id, kind: "delete", message: "", tone: "idle" });
+    try {
+      await deleteSite(row.id);
+      setAction({ id: null, kind: null, message: `已删除监控：${row.name}。`, tone: "success" });
+      refresh();
+    } catch (error) {
+      setAction({ id: row.id, kind: null, message: actionErrorMessage(error), tone: "error" });
+    }
+  };
+
   if (loading || !data) {
     return <div className="page-loading"><RefreshCw size={18} className="spin" /> 正在同步监控任务…</div>;
   }
@@ -218,7 +232,7 @@ export function MonitorsPage() {
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <MonitorTableRow key={row.id} row={row} action={action} onScan={runScan} onToggle={toggleEnabled} />
+                  <MonitorTableRow key={row.id} row={row} action={action} onScan={runScan} onToggle={toggleEnabled} onDelete={removeMonitor} />
                 ))}
               </tbody>
             </table>
@@ -242,9 +256,10 @@ function SummaryCard({ label, value, detail, icon, tone }: { label: string; valu
   );
 }
 
-function MonitorTableRow({ row, action, onScan, onToggle }: { row: MonitorRow; action: ActionState; onScan: (row: MonitorRow) => void; onToggle: (row: MonitorRow) => void }) {
+function MonitorTableRow({ row, action, onScan, onToggle, onDelete }: { row: MonitorRow; action: ActionState; onScan: (row: MonitorRow) => void; onToggle: (row: MonitorRow) => void; onDelete: (row: MonitorRow) => void }) {
   const scanning = action.id === row.id && action.kind === "scan";
   const toggling = action.id === row.id && action.kind === "toggle";
+  const deleting = action.id === row.id && action.kind === "delete";
   const paused = row.status === "paused";
 
   return (
@@ -266,10 +281,11 @@ function MonitorTableRow({ row, action, onScan, onToggle }: { row: MonitorRow; a
       <td><span className={row.status === "warning" ? "failure-text warning" : "failure-text"}>{row.failureReason}</span></td>
       <td>
         <div className="monitor-actions">
-          <button className="icon-action" type="button" aria-label={`${row.name} 立即扫描`} title="立即扫描" onClick={() => onScan(row)} disabled={scanning || toggling}><RefreshCw size={14} /></button>
-          <button className="icon-action" type="button" aria-label={`${row.name} ${paused ? "恢复" : "暂停"}`} title={paused ? "恢复" : "暂停"} onClick={() => onToggle(row)} disabled={scanning || toggling}>{paused ? <Play size={14} /> : <Pause size={14} />}</button>
+          <button className="icon-action" type="button" aria-label={`${row.name} 立即扫描`} title="立即扫描" onClick={() => onScan(row)} disabled={scanning || toggling || deleting}><RefreshCw size={14} /></button>
+          <button className="icon-action" type="button" aria-label={`${row.name} ${paused ? "恢复" : "暂停"}`} title={paused ? "恢复" : "暂停"} onClick={() => onToggle(row)} disabled={scanning || toggling || deleting}>{paused ? <Play size={14} /> : <Pause size={14} />}</button>
           <Link className="icon-action" to={`/monitors/${row.id}`} aria-label={`${row.name} 编辑规则`} title="编辑规则"><Edit3 size={14} /></Link>
           <Link className="icon-action" to="/inbox" aria-label={`${row.name} 查看变化`} title="查看变化"><ArrowUpRight size={14} /></Link>
+          <button className="icon-action danger-action" type="button" aria-label={`${row.name} 删除监控`} title="删除监控" onClick={() => onDelete(row)} disabled={scanning || toggling || deleting}><Trash2 size={14} /></button>
         </div>
       </td>
     </tr>

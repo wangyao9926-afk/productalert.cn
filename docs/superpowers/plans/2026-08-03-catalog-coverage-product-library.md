@@ -41,8 +41,8 @@
 **Files:**
 - Modify: `app/crawler.py`
 - Modify: `app/monitor.py`
-- Create: `app/migrations/sqlite/004_scan_job_candidates.sql`
-- Create: `app/migrations/postgresql/004_scan_job_candidates.sql`
+- Create: `app/migrations/sqlite/010_scan_job_candidates.sql`
+- Create: `app/migrations/postgresql/010_scan_job_candidates.sql`
 - Create: `test_catalog_scan_quality.py`
 
 **Interfaces:**
@@ -122,7 +122,7 @@ Run: `& .\.venv\Scripts\python.exe -m unittest -q test_catalog_scan_quality.Cata
 Expected: PASS; product-only counts and `Retry-After` are asserted.
 
 ```powershell
-git add app/crawler.py app/monitor.py app/migrations/sqlite/004_scan_job_candidates.sql app/migrations/postgresql/004_scan_job_candidates.sql test_catalog_scan_quality.py
+git add app/crawler.py app/monitor.py app/migrations/sqlite/010_scan_job_candidates.sql app/migrations/postgresql/010_scan_job_candidates.sql test_catalog_scan_quality.py
 git commit -m "feat: record catalog scan candidate quality"
 ```
 

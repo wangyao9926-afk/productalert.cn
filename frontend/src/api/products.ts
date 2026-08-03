@@ -51,6 +51,10 @@ export function loadProducts(siteId?: number): Promise<Product[]> {
   return getJson<Product[]>(`/api/products${query}`);
 }
 
+export function loadPriceMatrix(): Promise<ProductMatchGroup[]> {
+  return getJson<ProductMatchGroup[]>("/api/product-match-groups");
+}
+
 export async function loadProductDetailContext(productId: number | string): Promise<ProductDetailContext> {
   const overview = await loadOverview();
   const product = overview.products.find((item) => String(item.id) === String(productId)) || null;

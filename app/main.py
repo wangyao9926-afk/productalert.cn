@@ -747,6 +747,63 @@ async def list_product_matches(product_id: int, user: dict = CurrentUser) -> lis
     return list(groups.values())
 
 
+@app.get("/api/product-match-groups")
+async def list_product_match_groups(user: dict = CurrentUser) -> list[dict]:
+    """Return only exact, cross-site identity matches owned by the current user."""
+    with get_db() as db:
+        rows = fetchall(
+            db,
+            """
+            SELECT
+                product_match_groups.id AS group_id,
+                product_match_groups.identifier_type,
+                product_match_groups.normalized_value AS identifier_value,
+                products.id AS product_id,
+                products.title AS product_title,
+                products.url AS product_url,
+                products.price,
+                products.price_amount,
+                products.currency,
+                products.availability,
+                sites.id AS site_id,
+                sites.name AS site_name
+            FROM product_match_groups
+            JOIN product_match_members ON product_match_members.group_id = product_match_groups.id
+            JOIN products ON products.id = product_match_members.product_id
+            JOIN sites ON sites.id = products.site_id
+            WHERE product_match_groups.user_id = ?
+            ORDER BY product_match_groups.id DESC, sites.name, products.id
+            """,
+            (user["id"],),
+        )
+    groups: dict[int, dict] = {}
+    for row in rows:
+        group_id = row["group_id"]
+        group = groups.setdefault(
+            group_id,
+            {
+                "id": group_id,
+                "identifier_type": row["identifier_type"],
+                "identifier_value": row["identifier_value"],
+                "products": [],
+            },
+        )
+        group["products"].append(
+            {
+                "id": row["product_id"],
+                "title": row["product_title"],
+                "url": row["product_url"],
+                "price": row["price"],
+                "price_amount": row["price_amount"],
+                "currency": row["currency"],
+                "availability": row["availability"],
+                "site_id": row["site_id"],
+                "site_name": row["site_name"],
+            }
+        )
+    return list(groups.values())
+
+
 @app.patch("/api/change-events/{event_id}/inbox-status")
 async def update_change_event_inbox_status(event_id: int, payload: InboxStatusUpdate, user: dict = CurrentUser) -> dict:
     with get_db() as db:

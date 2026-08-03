@@ -131,6 +131,36 @@ def finish_scan_job(
         )
 
 
+def update_scan_job_progress(
+    job_id: int,
+    *,
+    phase: str,
+    discovered_count: int,
+    processed_count: int,
+    failed_count: int,
+    product_count: int | None = None,
+    message: str = "",
+) -> None:
+    progress = {
+        "phase": phase,
+        "discovered_count": discovered_count,
+        "processed_count": processed_count,
+        "failed_count": failed_count,
+        "product_count": product_count,
+    }
+    with get_db() as db:
+        update_by_id(
+            db,
+            "scan_jobs",
+            {
+                "candidates_count": discovered_count,
+                "error_count": failed_count,
+                "message": message,
+                "result": json_dumps({"progress": progress}),
+            },
+        )
+
+
 def update_source_status(source_id: int, status: str) -> None:
     with get_db() as db:
         update_by_id(db, "monitor_sources", source_id, {"last_checked_at": now_iso(), "last_status": status})

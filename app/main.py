@@ -1109,6 +1109,24 @@ async def list_scan_jobs(site_id: int | None = None, user: dict = CurrentUser) -
     return jobs
 
 
+@app.get("/api/scan-jobs/{job_id}")
+async def get_scan_job(job_id: int, user: dict = CurrentUser) -> dict:
+    with get_db() as db:
+        row = fetchone(
+            db,
+            """
+            SELECT scan_jobs.*
+            FROM scan_jobs
+            JOIN sites ON sites.id = scan_jobs.site_id
+            WHERE scan_jobs.id = ? AND sites.user_id = ?
+            """,
+            (job_id, user["id"]),
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan job not found")
+    return row_to_dict(row)
+
+
 @app.get("/api/audit-logs")
 async def list_audit_logs(site_id: int | None = None, user: dict = CurrentUser) -> list[dict]:
     sql = """

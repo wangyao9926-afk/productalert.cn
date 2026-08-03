@@ -145,6 +145,36 @@ export function ProductDetailPage() {
       <section className="panel related-events-panel">
         <div className="panel-heading">
           <div>
+            <div className="panel-kicker">VERIFIED IDENTITY</div>
+            <h2>同款匹配</h2>
+          </div>
+          <span className="monitor-count">{data.matches.length} 组</span>
+        </div>
+        {data.matches.length ? data.matches.map((group) => (
+          <div className="match-group" key={group.id}>
+            <p className="table-sub">精确 {group.identifier_type.toUpperCase()}：{group.identifier_value}</p>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>站点</th><th>商品</th><th>价格</th><th>库存</th></tr></thead>
+                <tbody>{group.products.map((match) => (
+                  <tr key={match.id}>
+                    <td>{match.site_name || "未知站点"}</td>
+                    <td><a href={match.url || "#"} target="_blank" rel="noreferrer">{match.title || `#${match.id}`}</a></td>
+                    <td>{variantPrice(match.price_amount, match.price, match.currency)}</td>
+                    <td><span className="tag">{availabilityText(match.availability)}</span></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+        )) : (
+          <div className="empty-state compact"><div className="empty-icon"><Boxes size={18} /></div><p>暂未发现拥有完全相同 GTIN 或 SKU 的跨站商品。</p></div>
+        )}
+      </section>
+
+      <section className="panel related-events-panel">
+        <div className="panel-heading">
+          <div>
             <div className="panel-kicker">VARIANTS</div>
             <h2>颜色 / 尺码变体</h2>
           </div>

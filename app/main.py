@@ -682,6 +682,71 @@ async def list_product_variants(product_id: int, user: dict = CurrentUser) -> li
     return [row_to_dict(row) for row in rows]
 
 
+@app.get("/api/products/{product_id}/matches")
+async def list_product_matches(product_id: int, user: dict = CurrentUser) -> list[dict]:
+    with get_db() as db:
+        owned_product = fetchone(
+            db,
+            """
+            SELECT products.id
+            FROM products
+            JOIN sites ON sites.id = products.site_id
+            WHERE products.id = ? AND sites.user_id = ?
+            """,
+            (product_id, user["id"]),
+        )
+        if not owned_product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        rows = fetchall(
+            db,
+            """
+            SELECT
+                product_match_groups.id AS group_id,
+                product_match_groups.identifier_type,
+                product_match_groups.normalized_value AS identifier_value,
+                products.id AS product_id,
+                products.title AS product_title,
+                products.url AS product_url,
+                products.price,
+                products.price_amount,
+                products.currency,
+                products.availability,
+                sites.id AS site_id,
+                sites.name AS site_name
+            FROM product_match_members own_members
+            JOIN product_match_groups ON product_match_groups.id = own_members.group_id
+            JOIN product_match_members group_members ON group_members.group_id = product_match_groups.id
+            JOIN products ON products.id = group_members.product_id
+            JOIN sites ON sites.id = products.site_id
+            WHERE own_members.product_id = ?
+              AND product_match_groups.user_id = ?
+            ORDER BY product_match_groups.id, sites.name, products.id
+            """,
+            (product_id, user["id"]),
+        )
+    groups: dict[int, dict] = {}
+    for row in rows:
+        group_id = row["group_id"]
+        group = groups.setdefault(
+            group_id,
+            {"id": group_id, "identifier_type": row["identifier_type"], "identifier_value": row["identifier_value"], "products": []},
+        )
+        group["products"].append(
+            {
+                "id": row["product_id"],
+                "title": row["product_title"],
+                "url": row["product_url"],
+                "price": row["price"],
+                "price_amount": row["price_amount"],
+                "currency": row["currency"],
+                "availability": row["availability"],
+                "site_id": row["site_id"],
+                "site_name": row["site_name"],
+            }
+        )
+    return list(groups.values())
+
+
 @app.patch("/api/change-events/{event_id}/inbox-status")
 async def update_change_event_inbox_status(event_id: int, payload: InboxStatusUpdate, user: dict = CurrentUser) -> dict:
     with get_db() as db:

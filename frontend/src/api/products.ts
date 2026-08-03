@@ -15,11 +15,31 @@ export type ProductVariant = {
   is_active: boolean;
 };
 
+export type ProductMatch = {
+  id: number;
+  title?: string | null;
+  url?: string | null;
+  price?: string | null;
+  price_amount?: number | null;
+  currency?: string | null;
+  availability?: string | null;
+  site_id: number;
+  site_name?: string | null;
+};
+
+export type ProductMatchGroup = {
+  id: number;
+  identifier_type: "gtin" | "sku" | string;
+  identifier_value: string;
+  products: ProductMatch[];
+};
+
 export type ProductDetailContext = {
   product: Product | null;
   products: Product[];
   events: ChangeEvent[];
   variants: ProductVariant[];
+  matches: ProductMatchGroup[];
   sites: Site[];
   live: boolean;
   mode: "live" | "demo";
@@ -40,15 +60,19 @@ export async function loadProductDetailContext(productId: number | string): Prom
       || (!!event.product_url && event.product_url === product.url)
       || (!!event.product_title && event.product_title === product.title);
   });
-  const variants = product && overview.live
-    ? await getJson<ProductVariant[]>(`/api/products/${product.id}/variants`)
-    : [];
+  const [variants, matches] = product && overview.live
+    ? await Promise.all([
+        getJson<ProductVariant[]>(`/api/products/${product.id}/variants`),
+        getJson<ProductMatchGroup[]>(`/api/products/${product.id}/matches`),
+      ])
+    : [[], []] as [ProductVariant[], ProductMatchGroup[]];
 
   return {
     product,
     products: overview.products,
     events,
     variants,
+    matches,
     sites: overview.sites,
     live: overview.live,
     mode: overview.mode,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import unescape
 from typing import Any, Iterable, Sequence
 from urllib.parse import urljoin, urlparse
@@ -73,6 +73,14 @@ class ExtractedVariant:
 
 
 @dataclass
+class ExtractedIdentifier:
+    kind: str
+    value: str
+    raw_value: str
+    provenance: str
+
+
+@dataclass
 class ExtractedProduct:
     url: str
     title: str
@@ -92,6 +100,7 @@ class ExtractedProduct:
     confidence_reasons: list[str]
     content_hash: str
     raw_text: str
+    identifiers: list[ExtractedIdentifier] = field(default_factory=list)
 
 
 @dataclass
@@ -531,6 +540,18 @@ def parse_money(value: Any) -> float | None:
         return None
 
 
+def normalized_identifier(kind: str, value: Any) -> str | None:
+    raw = clean_text(str(value or ""))
+    if not raw:
+        return None
+    if kind == "gtin":
+        digits = re.sub(r"\D", "", raw)
+        return digits or None
+    if kind == "sku":
+        return raw.upper()
+    return raw
+
+
 def format_money(value: float, currency: str | None = None) -> str:
     symbol = currency_symbol(currency)
     amount = f"{value:.2f}".rstrip("0").rstrip(".")
@@ -791,6 +812,10 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
         if isinstance(option, dict) and clean_text(str(option.get("name") or ""))
     ]
     extracted_variants: list[ExtractedVariant] = []
+    identifiers: list[ExtractedIdentifier] = []
+    product_external_id = normalized_identifier("platform_product_id", product.get("id"))
+    if product_external_id:
+        identifiers.append(ExtractedIdentifier("platform_product_id", product_external_id, str(product.get("id")), "shopify_product"))
     for index, variant in enumerate(variants):
         if not isinstance(variant, dict):
             continue
@@ -814,6 +839,10 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
                 availability="in_stock" if variant.get("available") is True else ("out_of_stock" if variant.get("available") is False else None),
             )
         )
+        for kind, raw_identifier in (("sku", variant.get("sku")), ("gtin", variant.get("barcode")), ("platform_variant_id", variant.get("id"))):
+            normalized = normalized_identifier(kind, raw_identifier)
+            if normalized:
+                identifiers.append(ExtractedIdentifier(kind, normalized, str(raw_identifier), "shopify_variant"))
     prices = [
         parsed
         for parsed in (parse_money(variant.get("price")) for variant in variants if isinstance(variant, dict))
@@ -888,6 +917,7 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
         confidence_reasons=confidence_reasons,
         content_hash=hashlib.sha256(hash_source.encode("utf-8")).hexdigest(),
         raw_text=raw_text[:4000],
+        identifiers=identifiers,
     )
 
 

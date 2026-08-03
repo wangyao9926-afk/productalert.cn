@@ -610,6 +610,71 @@ def sync_product_variants(
         update_by_id(db, "product_variants", existing["id"], {"is_active": False, "availability": "unavailable"})
 
 
+def sync_product_identifiers(db, product_id: int, product) -> None:
+    for identifier in product.identifiers:
+        insert_ignore(
+            db,
+            "product_identifiers",
+            ["product_id", "identifier_type", "normalized_value", "raw_value", "provenance"],
+            (product_id, identifier.kind, identifier.value, identifier.raw_value, identifier.provenance),
+        )
+
+
+def refresh_product_match_groups(db, product_id: int) -> None:
+    product = fetchone(
+        db,
+        """
+        SELECT products.site_id, sites.user_id
+        FROM products
+        JOIN sites ON sites.id = products.site_id
+        WHERE products.id = ?
+        """,
+        (product_id,),
+    )
+    if not product:
+        return
+    identifiers = fetchall(
+        db,
+        """
+        SELECT identifier_type, normalized_value
+        FROM product_identifiers
+        WHERE product_id = ? AND identifier_type IN ('gtin', 'sku')
+        """,
+        (product_id,),
+    )
+    for identifier in identifiers:
+        members = fetchall(
+            db,
+            """
+            SELECT product_identifiers.product_id, products.site_id
+            FROM product_identifiers
+            JOIN products ON products.id = product_identifiers.product_id
+            JOIN sites ON sites.id = products.site_id
+            WHERE product_identifiers.identifier_type = ?
+              AND product_identifiers.normalized_value = ?
+              AND sites.user_id = ?
+            """,
+            (identifier["identifier_type"], identifier["normalized_value"], product["user_id"]),
+        )
+        if len({member["site_id"] for member in members}) < 2:
+            continue
+        group = fetchone(
+            db,
+            """
+            SELECT id FROM product_match_groups
+            WHERE user_id = ? AND identifier_type = ? AND normalized_value = ?
+            """,
+            (product["user_id"], identifier["identifier_type"], identifier["normalized_value"]),
+        )
+        group_id = group["id"] if group else insert_row(
+            db,
+            "product_match_groups",
+            {"user_id": product["user_id"], "identifier_type": identifier["identifier_type"], "normalized_value": identifier["normalized_value"]},
+        )
+        for member in members:
+            insert_ignore(db, "product_match_members", ["group_id", "product_id"], (group_id, member["product_id"]))
+
+
 async def extract_and_store_product(
     candidate,
     source_data: dict,
@@ -668,6 +733,8 @@ async def extract_and_store_product(
                 },
             )
             sync_product_variants(db, exists["id"], product, event_source_data, source_id, record_changes)
+            sync_product_identifiers(db, exists["id"], product)
+            refresh_product_match_groups(db, exists["id"])
             return None
         product_id = insert_row(
             db,
@@ -698,6 +765,8 @@ async def extract_and_store_product(
             },
         )
         sync_product_variants(db, product_id, product)
+        sync_product_identifiers(db, product_id, product)
+        refresh_product_match_groups(db, product_id)
 
     saved = {
         "id": product_id,

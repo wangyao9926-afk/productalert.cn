@@ -5,7 +5,7 @@ import difflib
 import json
 from datetime import datetime, timedelta, timezone
 
-from app.crawler import classify_product_url, discover_candidates, extract_candidate_product, extract_source_text, normalize_url
+from app.crawler import ProductCandidate, ProductFetchError, canonical_candidate_key, classify_product_url, discover_candidates, extract_candidate_product, extract_source_text, normalize_url
 from app.db import DB_BACKEND, boolean_true_sql, execute_sql, fetchall, fetchone, get_db, insert_ignore, insert_row, is_integrity_error, json_dumps, row_to_dict, select_by_id, storage_column, update_by_id, update_by_id_when
 from app.evidence_store import load_screenshot, save_screenshot
 from app.notifier import change_event_payload, should_notify_event
@@ -86,6 +86,98 @@ def create_scan_job(
                 "queued_at": now_iso(),
             },
         )
+
+
+def record_scan_candidate(
+    job_id: int,
+    candidate_url: str,
+    *,
+    status: str,
+    http_status: int | None = None,
+    error_category: str | None = None,
+    retry_after_seconds: int | None = None,
+    payload: dict | None = None,
+) -> None:
+    candidate = ProductCandidate(normalize_url(candidate_url), payload=payload)
+    canonical_key = canonical_candidate_key(candidate)
+    with get_db() as db:
+        job = fetchone(db, "SELECT site_id, source_id FROM scan_jobs WHERE id = ?", (job_id,))
+        if not job:
+            raise ValueError("Scan job not found")
+        existing = fetchone(
+            db,
+            "SELECT * FROM scan_job_candidates WHERE job_id = ? AND canonical_key = ?",
+            (job_id, canonical_key),
+        )
+        if existing:
+            updates = {"attempt_count": existing["attempt_count"] + 1, "updated_at": now_iso()}
+            if existing["status"] != "stored":
+                updates.update(
+                    {
+                        "status": status,
+                        "http_status": http_status,
+                        "error_category": error_category,
+                        "retry_after_seconds": retry_after_seconds,
+                        "payload_json": json_dumps(payload) if payload else None,
+                    }
+                )
+            update_by_id(db, "scan_job_candidates", existing["id"], updates)
+            return
+        insert_row(
+            db,
+            "scan_job_candidates",
+            {
+                "job_id": job_id,
+                "site_id": job["site_id"],
+                "source_id": job["source_id"],
+                "url": candidate.url,
+                "canonical_key": canonical_key,
+                "status": status,
+                "http_status": http_status,
+                "error_category": error_category,
+                "retry_after_seconds": retry_after_seconds,
+                "attempt_count": 1,
+                "payload_json": json_dumps(payload) if payload else None,
+                "updated_at": now_iso(),
+            },
+        )
+
+
+def new_scan_quality(discovered_product_count: int = 0) -> dict[str, int | str]:
+    return {
+        "discovered_product_count": discovered_product_count,
+        "attempted_product_count": 0,
+        "stored_product_count": 0,
+        "rate_limited_count": 0,
+        "blocked_count": 0,
+        "fetch_failed_count": 0,
+        "parse_failed_count": 0,
+        "non_product_count": 0,
+        "pending_retry_count": 0,
+        "baseline_state": "pending",
+    }
+
+
+def quality_has_unverified_products(quality: dict[str, int | str]) -> bool:
+    return any(
+        int(quality[key]) > 0
+        for key in ("rate_limited_count", "blocked_count", "fetch_failed_count", "parse_failed_count", "pending_retry_count")
+    )
+
+
+def finalize_scan_quality(quality: dict[str, int | str]) -> dict[str, int | str]:
+    quality["baseline_state"] = "incomplete" if quality_has_unverified_products(quality) else "complete"
+    return quality
+
+
+def aggregate_scan_quality(results: list[dict]) -> dict[str, int | str]:
+    quality = new_scan_quality()
+    numeric_keys = [key for key, value in quality.items() if isinstance(value, int)]
+    for result in results:
+        source_quality = result.get("progress", {}).get("quality", {})
+        for key in numeric_keys:
+            quality[key] += int(source_quality.get(key, 0))
+    return finalize_scan_quality(quality)
 
 
 def claim_scan_job(job_id: int) -> bool:
@@ -1059,6 +1151,8 @@ async def scan_source(
             require_relevance=require_relevance,
             selector=source_data.get("selector"),
         )
+        candidates = [candidate for candidate in candidates if classify_product_url(candidate.url)[0] == "product_detail"]
+        quality = new_scan_quality(len(candidates))
         local_progress["discovered_count"] = len(candidates)
         if progress_state is not None:
             progress_state["discovered_count"] += len(candidates)
@@ -1094,6 +1188,7 @@ async def scan_source(
                         (source_id, candidate.url, candidate.title_hint),
                     )
             for candidate in candidates:
+                record_scan_candidate(job_id, candidate.url, status="pending", payload=candidate.payload)
                 try:
                     saved = await extract_and_store_product(
                         candidate,
@@ -1103,7 +1198,34 @@ async def scan_source(
                         notify=False,
                         record_changes=False,
                     )
+                    quality["attempted_product_count"] += 1
+                    quality["stored_product_count"] += 1
+                    record_scan_candidate(job_id, candidate.url, status="stored", http_status=200, payload=candidate.payload)
+                except ProductFetchError as exc:
+                    quality["attempted_product_count"] += 1
+                    if exc.error_category == "rate_limited":
+                        quality["rate_limited_count"] += 1
+                    elif exc.error_category == "blocked":
+                        quality["blocked_count"] += 1
+                    else:
+                        quality["fetch_failed_count"] += 1
+                    record_scan_candidate(
+                        job_id,
+                        candidate.url,
+                        status=exc.error_category,
+                        http_status=exc.http_status,
+                        error_category=exc.error_category,
+                        retry_after_seconds=exc.retry_after_seconds,
+                        payload=candidate.payload,
+                    )
+                    local_progress["failed_count"] += 1
+                    if progress_state is not None:
+                        progress_state["failed_count"] += 1
+                    saved = None
                 except Exception:
+                    quality["attempted_product_count"] += 1
+                    quality["fetch_failed_count"] += 1
+                    record_scan_candidate(job_id, candidate.url, status="fetch_failed", error_category="fetch_failed", payload=candidate.payload)
                     local_progress["failed_count"] += 1
                     if progress_state is not None:
                         progress_state["failed_count"] += 1
@@ -1115,6 +1237,7 @@ async def scan_source(
                     report_progress("extracting_products", "正在提取商品信息")
                 if saved:
                     baseline_products.append(saved)
+            finalize_scan_quality(quality)
             with get_db() as db:
                 total_products = fetchone(
                     db,
@@ -1127,14 +1250,19 @@ async def scan_source(
                     """,
                     (source_data["site_id"],),
                 )["count"]
-                status = f"\u4ea7\u54c1\u5e93\u57fa\u7ebf\u5b8c\u6210\uff1a\u8bb0\u5f55 {len(candidates)} \u4e2a\u94fe\u63a5\uff0c\u5f53\u524d\u5171 {total_products} \u4e2a\u4ea7\u54c1\uff0c\u672c\u6b21\u8865\u5165 {len(baseline_products)} \u4e2a"
+                baseline_completed = bool(total_products) and quality["baseline_state"] == "complete"
+                status = (
+                    f"\u4ea7\u54c1\u5e93\u57fa\u7ebf\u5b8c\u6210\uff1a\u5df2\u9a8c\u8bc1 {total_products} \u4e2a\u4ea7\u54c1"
+                    if baseline_completed
+                    else f"\u4ea7\u54c1\u5e93\u57fa\u7ebf\u4e0d\u5b8c\u6574\uff1a\u5df2\u9a8c\u8bc1 {total_products} \u4e2a\uff0c\u53d7\u9650\u6d41 {quality['rate_limited_count']} \u4e2a"
+                )
                 execute_sql(
                     db,
                     """
                     UPDATE monitor_sources
                         SET
-                        baseline_completed_at = COALESCE(baseline_completed_at, ?),
-                        product_baseline_completed_at = ?,
+                        baseline_completed_at = CASE WHEN ? THEN COALESCE(baseline_completed_at, ?) ELSE baseline_completed_at END,
+                        product_baseline_completed_at = CASE WHEN ? THEN ? ELSE product_baseline_completed_at END,
                         last_checked_at = ?,
                         last_status = ?,
                         failure_count = 0,
@@ -1142,7 +1270,9 @@ async def scan_source(
                     WHERE id = ?
                     """,
                     (
+                        baseline_completed,
                         now_iso(),
+                        baseline_completed,
                         now_iso(),
                         now_iso(),
                         status,
@@ -1151,7 +1281,6 @@ async def scan_source(
                 )
             update_site_status(source_data["site_id"], status)
             mode = "baseline" if baseline_mode else "product_baseline"
-            baseline_completed = total_products > 0
             job_status = "success"
             if not baseline_completed:
                 job_status = "failed"
@@ -1182,6 +1311,7 @@ async def scan_source(
                     **local_progress,
                     "product_count": total_products,
                     "baseline_completed": baseline_completed,
+                    "quality": quality,
                 },
             }
             finish_scan_job(
@@ -1398,11 +1528,14 @@ async def scan_site(site_id: int, notify: bool = True, trigger_type: str = "manu
             """,
             (site_id,),
         )["count"]
-    baseline_completed = product_count > 0
+    quality = aggregate_scan_quality(results)
+    baseline_completed = bool(product_count) and quality["baseline_state"] == "complete"
     source_failed = any(item.get("status") == "failed" for item in results)
     status = "success"
-    if not baseline_completed and trigger_type == "baseline":
+    if not product_count and trigger_type == "baseline":
         status = "failed"
+    elif not baseline_completed and trigger_type == "baseline":
+        status = "partial_success"
     elif errors or source_failed or progress_state["failed_count"]:
         status = "partial_success" if product_count else "failed"
     result = {
@@ -1417,6 +1550,7 @@ async def scan_site(site_id: int, notify: bool = True, trigger_type: str = "manu
             **progress_state,
             "product_count": product_count,
             "baseline_completed": baseline_completed,
+            "quality": quality,
         },
     }
     finish_scan_job(

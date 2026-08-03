@@ -124,6 +124,55 @@ class FetchedDocument:
     content_type: str | None
 
 
+@dataclass(frozen=True)
+class FetchResult:
+    url: str
+    status_code: int | None
+    content: str | None
+    error_category: str | None
+    retry_after_seconds: int | None
+
+
+class ProductFetchError(RuntimeError):
+    def __init__(self, error_category: str, http_status: int | None = None, *, retry_after_seconds: int | None = None) -> None:
+        super().__init__(error_category)
+        self.error_category = error_category
+        self.http_status = http_status
+        self.retry_after_seconds = retry_after_seconds
+
+
+def fetch_result_from_response(
+    url: str,
+    *,
+    status_code: int,
+    headers: dict[str, str],
+    content: str,
+) -> FetchResult:
+    if status_code == 429:
+        retry_after = headers.get("Retry-After", "").strip()
+        return FetchResult(
+            url=url,
+            status_code=status_code,
+            content=None,
+            error_category="rate_limited",
+            retry_after_seconds=int(retry_after) if retry_after.isdigit() else None,
+        )
+    if status_code == 403:
+        return FetchResult(url, status_code, None, "blocked", None)
+    if status_code >= 400:
+        return FetchResult(url, status_code, None, "http_error", None)
+    return FetchResult(url, status_code, content, None, None)
+
+
+def raise_for_fetch_failure(result: FetchResult) -> None:
+    if result.error_category:
+        raise ProductFetchError(
+            result.error_category,
+            result.status_code,
+            retry_after_seconds=result.retry_after_seconds,
+        )
+
+
 def classify_product_url(url: str) -> tuple[str, str]:
     path = urlparse(url).path.lower().strip("/")
     segments = [segment for segment in path.split("/") if segment]
@@ -216,6 +265,34 @@ async def fetch_document(client: httpx.AsyncClient, url: str) -> FetchedDocument
         return None
 
 
+async def fetch_product_result(client: httpx.AsyncClient, url: str) -> FetchResult:
+    safe_url = validate_public_http_url(url)
+    try:
+        for _ in range(5):
+            await wait_for_domain_slot(safe_url)
+            response = await client.get(safe_url, follow_redirects=False)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                safe_url = resolve_redirect_url(safe_url, response.headers.get("location", ""))
+                continue
+            result = fetch_result_from_response(
+                safe_url,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                content=response.text,
+            )
+            if result.error_category:
+                return result
+            content_type = response.headers.get("content-type", "")
+            if content_type and not any(kind in content_type for kind in ("text", "html")):
+                return FetchResult(safe_url, response.status_code, None, "unsupported_content", None)
+            return result
+        return FetchResult(safe_url, None, None, "redirect_loop", None)
+    except httpx.TimeoutException:
+        return FetchResult(safe_url, None, None, "timeout", None)
+    except (httpx.HTTPError, UnsafeUrlError):
+        return FetchResult(safe_url, None, None, "fetch_failed", None)
+
+
 async def fetch_text(client: httpx.AsyncClient, url: str) -> str | None:
     document = await fetch_document(client, url)
     return document.content if document else None
@@ -273,6 +350,24 @@ def xml_candidates(xml_text: str, base_url: str) -> list[ProductCandidate]:
             candidates.append(ProductCandidate(urljoin(base_url, href)))
 
     return candidates
+
+
+def discover_product_candidates(
+    source_url: str,
+    *,
+    sitemap_documents: dict[str, str],
+    limit: int = 1000,
+) -> list[ProductCandidate]:
+    candidates: list[ProductCandidate] = []
+    for sitemap_url, sitemap_text in sitemap_documents.items():
+        candidates.extend(xml_candidates(sitemap_text, sitemap_url or source_url))
+    product_candidates = [
+        ProductCandidate(normalize_url(candidate.url), candidate.title_hint, candidate.payload)
+        for candidate in candidates
+        if same_domain(source_url, candidate.url)
+        and classify_product_url(candidate.url)[0] == "product_detail"
+    ]
+    return unique_urls(sorted(product_candidates, key=candidate_priority), limit)
 
 
 def looks_like_sitemap(url: str) -> bool:
@@ -999,7 +1094,9 @@ async def extract_product(url: str, title_hint: str | None = None) -> ExtractedP
         "user-agent": "Mozilla/5.0 ProductIntelligenceMonitor/1.0 (+local monitoring tool)"
     }
     async with httpx.AsyncClient(timeout=20, headers=headers) as client:
-        html = await fetch_text(client, url)
+        fetch_result = await fetch_product_result(client, url)
+    raise_for_fetch_failure(fetch_result)
+    html = fetch_result.content
 
     product = product_from_html(url, html, title_hint) if html else None
     if product and product.confidence_score >= 0.7:

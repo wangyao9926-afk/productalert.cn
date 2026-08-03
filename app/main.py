@@ -1164,6 +1164,38 @@ async def get_scan_job(job_id: int, user: dict = CurrentUser) -> dict:
     return row_to_dict(row)
 
 
+@app.post("/api/scan-jobs/{job_id}/resume")
+async def resume_scan_job(job_id: int, user: dict = CurrentUser) -> dict:
+    with get_db() as db:
+        row = fetchone(
+            db,
+            """
+            SELECT scan_jobs.*
+            FROM scan_jobs
+            JOIN sites ON sites.id = scan_jobs.site_id
+            WHERE scan_jobs.id = ? AND sites.user_id = ?
+            """,
+            (job_id, user["id"]),
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan job not found")
+    job = row_to_dict(row)
+    quality = job.get("result", {}).get("progress", {}).get("quality", {})
+    if job["job_type"] != "site_scan" or quality.get("baseline_state") != "incomplete":
+        raise HTTPException(status_code=409, detail="Only incomplete site baselines can be resumed")
+    resumed = await enqueue_site_scan(job["site_id"], notify=False, trigger_type="resume")
+    write_audit_log(
+        user["id"],
+        "scan.resume",
+        "scan_job",
+        entity_id=resumed.get("id"),
+        site_id=job["site_id"],
+        summary=f"Resumed incomplete scan job {job_id}",
+        metadata={"resume_of_job_id": job_id},
+    )
+    return {**resumed, "resume_of_job_id": job_id}
+
+
 @app.get("/api/audit-logs")
 async def list_audit_logs(site_id: int | None = None, user: dict = CurrentUser) -> list[dict]:
     sql = """

@@ -9,6 +9,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -31,13 +32,24 @@ from app.db import ROOT, assignment_list, execute_sql, fetchall, fetchone, get_d
 from app.evidence_store import evidence_path
 from app.monitor import create_site, create_source, scan_site, scan_source, scheduler_loop
 from app.notifier import notification_worker_loop, process_pending_notifications
-from app.settings import database_settings, queue_settings, runtime_settings
+from app.settings import database_settings, production_web_configuration_errors, queue_settings, runtime_settings, web_security_settings
 from app.task_queue import enqueue_site_scan, enqueue_source_scan, queue_backend_name, scan_worker_loop
 from app.url_safety import UnsafeUrlError, validate_public_http_url
 
 
 app = FastAPI(title="官网新品情报监控系统")
 STATIC_DIR = ROOT / "static"
+web_security = web_security_settings()
+web_configuration_errors = production_web_configuration_errors(web_security)
+if web_configuration_errors:
+    raise RuntimeError("Invalid production web configuration: " + "; ".join(web_configuration_errors))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(web_security.allowed_origins),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 SourceType = Literal["homepage", "sitemap", "rss", "listing_page", "news_page", "custom_page"]
 SeverityLevel = Literal["low", "normal", "high", "critical"]

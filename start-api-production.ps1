@@ -4,6 +4,7 @@ param(
     [ValidateSet("in_process", "rq")]
     [string]$Queue = "rq",
     [string]$RedisUrl = "",
+    [string]$CorsAllowedOrigins = "",
     [string]$HostName = "127.0.0.1",
     [int]$Port = 8000,
     [string]$LogDir = "logs",
@@ -80,9 +81,16 @@ if (-not $RedisUrl) {
 
 $env:DATABASE_URL = $DatabaseUrl
 $env:QUEUE_BACKEND = $Queue
+$env:APP_ENV = "production"
 $env:START_BACKGROUND_WORKERS = "false"
 $env:START_NOTIFICATION_WORKER = "false"
 $env:SESSION_COOKIE_SECURE = if ($InsecureCookies) { "false" } else { "true" }
+$env:SESSION_COOKIE_SAMESITE = if ($InsecureCookies) { "lax" } else { "none" }
+if ($CorsAllowedOrigins) {
+    $env:CORS_ALLOWED_ORIGINS = $CorsAllowedOrigins
+} elseif (-not $env:CORS_ALLOWED_ORIGINS) {
+    $env:CORS_ALLOWED_ORIGINS = Read-EnvValue $EnvPath "CORS_ALLOWED_ORIGINS"
+}
 
 if ($Queue -eq "rq") {
     $env:REDIS_URL = $RedisUrl
@@ -114,6 +122,8 @@ if ($Queue -eq "rq") {
 Write-Host "  START_BACKGROUND_WORKERS=$env:START_BACKGROUND_WORKERS"
 Write-Host "  START_NOTIFICATION_WORKER=$env:START_NOTIFICATION_WORKER"
 Write-Host "  SESSION_COOKIE_SECURE=$env:SESSION_COOKIE_SECURE"
+Write-Host "  SESSION_COOKIE_SAMESITE=$env:SESSION_COOKIE_SAMESITE"
+Write-Host "  CORS_ALLOWED_ORIGINS=$env:CORS_ALLOWED_ORIGINS"
 Write-Host "  LOG_DIR=$ResolvedLogDir"
 Write-Host "  URL=http://$HostName`:$Port"
 

@@ -13,7 +13,7 @@ import {
   Webhook,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { ApiError } from "../../api/client";
+import { apiUrl, ApiError } from "../../api/client";
 import { createNotificationRule, loadNotificationRules, loadNotifications, retryNotification, type NotificationRecord, type NotificationRule } from "../../api/notifications";
 import { loadOverview, type OverviewData } from "../../api/overview";
 
@@ -254,7 +254,7 @@ export function NotificationsPage() {
         </div>
         <div className="page-actions">
           <button className="icon-button" type="button" onClick={refresh} aria-label="刷新通知中心"><RefreshCw size={17} /></button>
-          <a className="button button-secondary" href="/api/export/notifications.csv" target="_blank" rel="noreferrer"><Download size={16} /> 导出 CSV</a>
+          <a className="button button-secondary" href={apiUrl("/api/export/notifications.csv")} target="_blank" rel="noreferrer"><Download size={16} /> 导出 CSV</a>
           <Link className="primary-button" to="/monitors/new"><BellRing size={17} /> 新建通知规则</Link>
         </div>
       </header>

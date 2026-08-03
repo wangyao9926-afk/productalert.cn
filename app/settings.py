@@ -34,6 +34,14 @@ class RuntimeSettings:
     start_notification_worker: bool
 
 
+@dataclass(frozen=True)
+class WebSecuritySettings:
+    environment: str
+    allowed_origins: tuple[str, ...]
+    session_cookie_secure: bool
+    session_cookie_samesite: str
+
+
 def database_settings() -> DatabaseSettings:
     raw_url = os.getenv("DATABASE_URL", "").strip()
     if not raw_url:
@@ -90,6 +98,49 @@ def public_app_url() -> str | None:
 def env_bool(name: str, default: bool) -> bool:
     raw_value = os.getenv(name, str(default).lower()).strip().lower()
     return raw_value in {"1", "true", "yes", "on"}
+
+
+def normalize_web_origin(value: str) -> str:
+    parsed = urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("CORS origins must be absolute HTTP(S) origins")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+        raise ValueError("CORS origins must not include credentials, paths, queries, or fragments")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def web_security_settings() -> WebSecuritySettings:
+    environment = os.getenv("APP_ENV", "development").strip().lower() or "development"
+    default_origins = "" if environment == "production" else "http://127.0.0.1:4175,http://localhost:4175"
+    raw_origins = os.getenv("CORS_ALLOWED_ORIGINS", default_origins)
+    origins = tuple(dict.fromkeys(normalize_web_origin(value) for value in raw_origins.split(",") if value.strip()))
+    default_secure = environment == "production"
+    default_samesite = "none" if environment == "production" else "lax"
+    samesite = os.getenv("SESSION_COOKIE_SAMESITE", default_samesite).strip().lower()
+    if samesite not in {"lax", "strict", "none"}:
+        raise ValueError("SESSION_COOKIE_SAMESITE must be lax, strict, or none")
+    return WebSecuritySettings(
+        environment=environment,
+        allowed_origins=origins,
+        session_cookie_secure=env_bool("SESSION_COOKIE_SECURE", default_secure),
+        session_cookie_samesite=samesite,
+    )
+
+
+def production_web_configuration_errors(settings: WebSecuritySettings | None = None) -> list[str]:
+    resolved = settings or web_security_settings()
+    if resolved.environment != "production":
+        return []
+    errors: list[str] = []
+    if not resolved.allowed_origins:
+        errors.append("CORS_ALLOWED_ORIGINS must list the deployed frontend origin")
+    if any(not origin.startswith("https://") for origin in resolved.allowed_origins):
+        errors.append("production CORS_ALLOWED_ORIGINS must use HTTPS")
+    if not resolved.session_cookie_secure:
+        errors.append("SESSION_COOKIE_SECURE must be true in production")
+    if resolved.session_cookie_samesite != "none":
+        errors.append("SESSION_COOKIE_SAMESITE must be none for a separately hosted frontend")
+    return errors
 
 
 def runtime_settings() -> RuntimeSettings:

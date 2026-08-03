@@ -10,7 +10,7 @@ export type OverviewData = {
   events: ChangeEvent[];
   logs: ScanLog[];
   live: boolean;
-  mode: "live" | "demo";
+  mode: "live" | "demo" | "unavailable";
   reason: OverviewReason;
   message: string;
 };
@@ -42,8 +42,28 @@ const demo: OverviewData = {
   message: "API 不可用，当前显示演示数据。",
 };
 
+const demoFallbackEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_FALLBACK === "true";
+
 function demoWith(reason: OverviewReason, message: string): OverviewData {
   return { ...demo, reason, message };
+}
+
+function unavailableWith(reason: OverviewReason, message: string): OverviewData {
+  return {
+    health: { ok: false },
+    sites: [],
+    products: [],
+    events: [],
+    logs: [],
+    live: false,
+    mode: "unavailable",
+    reason,
+    message,
+  };
+}
+
+function fallbackWith(reason: OverviewReason, demoMessage: string, unavailableMessage: string): OverviewData {
+  return demoFallbackEnabled ? demoWith(reason, demoMessage) : unavailableWith(reason, unavailableMessage);
 }
 
 export async function loadOverview(): Promise<OverviewData> {
@@ -68,11 +88,11 @@ export async function loadOverview(): Promise<OverviewData> {
     };
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
-      return demoWith("auth_required", "需要登录后才能读取真实 API，当前显示演示数据。");
+      return fallbackWith("auth_required", "需要登录后才能读取真实 API，当前显示演示数据。", "需要登录后才能读取真实 API。");
     }
     if (error instanceof ApiError) {
-      return demoWith("api_error", `API 返回异常 ${error.status}，当前显示演示数据。`);
+      return fallbackWith("api_error", `API 返回异常 ${error.status}，当前显示演示数据。`, `API 返回异常 ${error.status}，未显示演示数据。`);
     }
-    return demoWith("api_unavailable", "API 不可用，当前显示演示数据。");
+    return fallbackWith("api_unavailable", "API 不可用，当前显示演示数据。", "API 不可用，未显示演示数据。");
   }
 }

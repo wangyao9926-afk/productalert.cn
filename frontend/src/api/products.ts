@@ -42,7 +42,7 @@ export type ProductDetailContext = {
   matches: ProductMatchGroup[];
   sites: Site[];
   live: boolean;
-  mode: "live" | "demo";
+  mode: "live" | "demo" | "unavailable";
   message: string;
 };
 

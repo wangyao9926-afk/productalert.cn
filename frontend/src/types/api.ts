@@ -13,12 +13,15 @@ export type Product = {
   site_name?: string;
   source_type?: string | null;
   title?: string;
+  description?: string | null;
   price?: string | number | null;
   price_amount?: string | number | null;
   compare_at_price?: string | number | null;
   currency?: string | null;
   availability?: string | null;
   variant_count?: number | null;
+  item_type?: string | null;
+  features?: string[];
   display_url?: string | null;
   link_label?: string | null;
   detected_at?: string | null;

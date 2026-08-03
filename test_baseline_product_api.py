@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import unittest
+from uuid import uuid4
+
+from fastapi.testclient import TestClient
+
+from app.db import execute_sql, get_db, init_db, insert_row, json_dumps
+from app.main import app
+
+
+class BaselineProductApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        self.owner_email = f"baseline-products-owner-{marker}@monitor.internal"
+        self.other_email = f"baseline-products-other-{marker}@monitor.internal"
+        self.client = TestClient(app)
+        self.other_client = TestClient(app)
+        owner = self.client.post("/api/auth/register", json={"email": self.owner_email, "password": "test-password-123"})
+        other = self.other_client.post("/api/auth/register", json={"email": self.other_email, "password": "test-password-123"})
+        self.assertEqual(owner.status_code, 200, owner.text)
+        self.assertEqual(other.status_code, 200, other.text)
+        self.owner_headers = {"Authorization": f"Bearer {owner.json()['token']}"}
+        self.other_headers = {"Authorization": f"Bearer {other.json()['token']}"}
+        self.product_url = f"https://baseline-products-{marker}.example.com/products/waterproof-bag"
+        with get_db() as db:
+            self.site_id = insert_row(
+                db,
+                "sites",
+                {
+                    "user_id": owner.json()["user"]["id"],
+                    "name": "Baseline products site",
+                    "url": f"https://baseline-products-{marker}.example.com",
+                    "scan_interval_minutes": 60,
+                    "notification_events": json_dumps(["product_new"]),
+                },
+            )
+            source_id = insert_row(
+                db,
+                "monitor_sources",
+                {
+                    "site_id": self.site_id,
+                    "source_type": "homepage",
+                    "url": f"https://baseline-products-{marker}.example.com",
+                    "scan_interval_minutes": 60,
+                },
+            )
+            insert_row(
+                db,
+                "products",
+                {
+                    "site_id": self.site_id,
+                    "source_id": source_id,
+                    "url": self.product_url,
+                    "title": "Waterproof Bag",
+                    "description": "A waterproof everyday bag",
+                    "image_url": "https://cdn.example.com/bag.jpg",
+                    "price": "$29.00",
+                    "price_amount": 29.0,
+                    "currency": "USD",
+                    "compare_at_price": 39.0,
+                    "availability": "in_stock",
+                    "variant_count": 2,
+                    "item_type": "product_detail",
+                    "review_status": "unreviewed",
+                    "discovery_status": "baseline",
+                    "extraction_source": "json_ld",
+                    "confidence_score": 0.95,
+                    "field_confidence": json_dumps({"price": 1.0}),
+                    "confidence_reasons": json_dumps([]),
+                    "features": json_dumps(["Water resistant"]),
+                    "content_hash": "baseline-product-hash",
+                    "raw_text": "Waterproof Bag",
+                },
+            )
+            self.job_id = insert_row(
+                db,
+                "scan_jobs",
+                {
+                    "site_id": self.site_id,
+                    "job_type": "site_scan",
+                    "trigger_type": "baseline",
+                    "status": "success",
+                    "result": json_dumps({"progress": {"baseline_completed": True, "product_count": 1}}),
+                },
+            )
+
+    def tearDown(self) -> None:
+        with get_db() as db:
+            execute_sql(db, "DELETE FROM users WHERE email IN (?, ?)", (self.owner_email, self.other_email))
+
+    def test_owner_reads_site_baseline_summary_and_product_fields(self) -> None:
+        summary = self.client.get(f"/api/sites/{self.site_id}/baseline-summary", headers=self.owner_headers)
+
+        self.assertEqual(summary.status_code, 200, summary.text)
+        self.assertEqual(summary.json()["product_count"], 1)
+        self.assertTrue(summary.json()["baseline_completed"])
+        self.assertEqual(summary.json()["latest_job"]["id"], self.job_id)
+
+        products = self.client.get(f"/api/products?site_id={self.site_id}", headers=self.owner_headers)
+
+        self.assertEqual(products.status_code, 200, products.text)
+        product = products.json()[0]
+        self.assertEqual(product["item_type"], "product_detail")
+        self.assertEqual(product["features"], ["Water resistant"])
+        self.assertEqual(product["description"], "A waterproof everyday bag")
+        self.assertEqual(product["image_url"], "https://cdn.example.com/bag.jpg")
+        self.assertEqual(product["compare_at_price"], 39.0)
+        self.assertEqual(product["variant_count"], 2)
+        self.assertEqual(product["url"], self.product_url)
+        self.assertEqual(product["availability"], "in_stock")
+        self.assertEqual(product["currency"], "USD")
+
+    def test_other_user_cannot_read_site_baseline_summary(self) -> None:
+        response = self.other_client.get(f"/api/sites/{self.site_id}/baseline-summary", headers=self.other_headers)
+
+        self.assertEqual(response.status_code, 404, response.text)
+
+
+if __name__ == "__main__":
+    unittest.main()

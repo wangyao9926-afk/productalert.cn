@@ -938,6 +938,42 @@ async def trigger_scan(site_id: int, user: dict = CurrentUser) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get("/api/sites/{site_id}/baseline-summary")
+async def get_site_baseline_summary(site_id: int, user: dict = CurrentUser) -> dict:
+    ensure_site_owner(site_id, user["id"])
+    with get_db() as db:
+        count = fetchone(
+            db,
+            """
+            SELECT COUNT(*) AS count
+            FROM products
+            WHERE site_id = ?
+              AND item_type = 'product_detail'
+              AND review_status != 'false_positive'
+            """,
+            (site_id,),
+        )
+        latest_job = fetchone(
+            db,
+            """
+            SELECT *
+            FROM scan_jobs
+            WHERE site_id = ? AND job_type = 'site_scan'
+            ORDER BY queued_at DESC, id DESC
+            LIMIT 1
+            """,
+            (site_id,),
+        )
+    latest_job_data = row_to_dict(latest_job) if latest_job else None
+    progress = (latest_job_data or {}).get("result", {}).get("progress", {})
+    return {
+        "site_id": site_id,
+        "product_count": int(count["count"]),
+        "latest_job": latest_job_data,
+        "baseline_completed": bool(progress.get("baseline_completed")),
+    }
+
+
 @app.post("/api/sources/{source_id}/scan")
 async def trigger_source_scan(source_id: int, user: dict = CurrentUser) -> dict:
     ensure_source_owner(source_id, user["id"])

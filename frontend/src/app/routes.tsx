@@ -4,6 +4,7 @@ import { LoginPage } from "../features/auth/LoginPage";
 import { InboxPage } from "../features/inbox/InboxPage";
 import { PriceMatrixPage } from "../features/intelligence/PriceMatrixPage";
 import { CreateMonitorPage } from "../features/monitors/CreateMonitorPage";
+import { BaselineScanPage } from "../features/monitors/BaselineScanPage";
 import { MonitorsPage } from "../features/monitors/MonitorsPage";
 import { NotificationsPage } from "../features/notifications/NotificationsPage";
 import { OperationsPage } from "../features/operations/OperationsPage";
@@ -44,6 +45,7 @@ export function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/monitors" element={<MonitorsPage />} />
       <Route path="/monitors/new" element={<CreateMonitorPage />} />
+      <Route path="/monitors/:siteId/baseline/:jobId" element={<BaselineScanPage />} />
       <Route path="/inbox" element={<InboxPage />} />
       <Route path="/changes/:id" element={<ChangeDetailPage />} />
       <Route path="/products" element={<ProductsPage />} />

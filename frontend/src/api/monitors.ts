@@ -1,7 +1,6 @@
-import { patchJson, sendJson } from "./client";
+import { getJson, patchJson, sendJson } from "./client";
 import type { Site } from "../types/api";
 
-type BackendSourceType = "listing_page" | "custom_page";
 type NotificationEvent = "product_new" | "variant_new" | "price_change" | "availability_change" | "description_change" | "text_change";
 
 export type CreateMonitorTaskInput = {
@@ -13,26 +12,26 @@ export type CreateMonitorTaskInput = {
   selector?: string;
 };
 
-export type MonitorSource = {
-  id: number;
-  site_id: number;
-  source_type: BackendSourceType;
-  url: string;
-  selector?: string | null;
-  scan_interval_minutes?: number;
-  enabled?: boolean;
-};
-
 export type CreateMonitorTaskResult = {
   site: Site;
-  source: MonitorSource;
+};
+
+export type ScanProgress = {
+  phase?: string;
+  discovered_count?: number;
+  processed_count?: number;
+  failed_count?: number;
+  product_count?: number | null;
+  baseline_completed?: boolean;
 };
 
 export type ScanJob = {
-  id?: number | string;
-  site_id?: number;
-  source_id?: number;
-  status?: string;
+  id: number | string;
+  site_id: number;
+  source_id?: number | null;
+  status: string;
+  message?: string | null;
+  result?: { progress?: ScanProgress };
 };
 
 const targetToNotificationEvent: Record<string, NotificationEvent[]> = {
@@ -49,10 +48,6 @@ function frequencyToMinutes(frequency: string) {
   if (frequency.includes("30")) return 30;
   if (frequency.includes("每天")) return 1440;
   return 60;
-}
-
-function extractionToSourceType(extractionMethod: string): BackendSourceType {
-  return extractionMethod === "auto" ? "listing_page" : "custom_page";
 }
 
 function siteNameFromUrl(targetUrl: string) {
@@ -85,18 +80,21 @@ export async function createMonitorTask(input: CreateMonitorTaskInput): Promise<
     notification_events: notificationEventsForTargets(input.targets),
   });
 
-  const source = await sendJson<MonitorSource>(`/api/sites/${site.id}/sources`, {
-    source_type: extractionToSourceType(input.extractionMethod),
-    url: input.targetUrl,
-    selector: input.extractionMethod === "css" ? input.selector || "body" : undefined,
-    scan_interval_minutes,
-  });
-
-  return { site, source };
+  return { site };
 }
 
 export function triggerSiteScan(siteId: number): Promise<ScanJob> {
   return sendJson<ScanJob>(`/api/sites/${siteId}/scan`, {});
+}
+
+export async function createMonitorAndStartBaseline(input: CreateMonitorTaskInput): Promise<{ site: Site; job: ScanJob }> {
+  const { site } = await createMonitorTask(input);
+  const job = await triggerSiteScan(site.id);
+  return { site, job };
+}
+
+export function getScanJob(jobId: number | string): Promise<ScanJob> {
+  return getJson<ScanJob>(`/api/scan-jobs/${jobId}`);
 }
 
 export function updateSiteEnabled(siteId: number, enabled: boolean): Promise<Site> {

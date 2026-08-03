@@ -16,9 +16,9 @@ import {
   Sparkles,
   Tags,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "../../api/client";
-import { createMonitorTask } from "../../api/monitors";
+import { createMonitorAndStartBaseline } from "../../api/monitors";
 
 type MonitorTarget = {
   id: string;
@@ -47,6 +47,7 @@ const frequencies = ["每 15 分钟", "每 30 分钟", "每 60 分钟", "每天 
 const notificationChannels = ["站内情报收件箱", "邮件通知", "飞书/企微预留"];
 
 export function CreateMonitorPage() {
+  const navigate = useNavigate();
   const [targetUrl, setTargetUrl] = useState("https://example.com/collections/new-arrivals");
   const [selectedTargets, setSelectedTargets] = useState<string[]>(["new-products", "price", "stock"]);
   const [extractionMethod, setExtractionMethod] = useState("auto");
@@ -92,16 +93,18 @@ export function CreateMonitorPage() {
     setSaveState("saving");
     setSaveMessage("");
     try {
-      const result = await createMonitorTask({
+      const result = await createMonitorAndStartBaseline({
         targetUrl,
         targets: selectedTargets,
         extractionMethod,
         frequency,
         channels,
       });
+      if (!result.job.id) throw new Error("Baseline scan job was not created");
       setSaved(true);
       setSaveState("success");
-      setSaveMessage(`保存到真实后端成功：站点 #${result.site.id}，监控源 #${result.source.id}。`);
+      navigate(`/monitors/${result.site.id}/baseline/${result.job.id}`);
+      setSaveMessage(`首扫任务已创建：站点 #${result.site.id}，正在跳转到扫描进度。`);
     } catch (error) {
       setSaveState("error");
       if (error instanceof ApiError && error.status === 401) {

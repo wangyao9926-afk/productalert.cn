@@ -95,6 +95,44 @@ def queue_backend_name() -> str:
     return scan_queue_backend.name
 
 
+async def recover_queued_scan_tasks(queue: ScanQueueBackend | None = None) -> int:
+    """Restore persisted tasks after an in-process worker restart."""
+    target_queue = queue or scan_queue_backend
+    if target_queue.name != "in_process":
+        return 0
+    with get_db() as db:
+        jobs = db.execute(
+            """
+            SELECT id, site_id, source_id, job_type, trigger_type
+            FROM scan_jobs
+            WHERE status = 'queued'
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    restored = 0
+    for job in jobs:
+        data = row_to_dict(job)
+        if data["job_type"] == "site_scan" and data["site_id"]:
+            task = ScanTask(
+                job_id=data["id"],
+                kind="site",
+                target_id=data["site_id"],
+                trigger_type=data["trigger_type"],
+            )
+        elif data["job_type"] == "source_scan" and data["source_id"]:
+            task = ScanTask(
+                job_id=data["id"],
+                kind="source",
+                target_id=data["source_id"],
+                trigger_type=data["trigger_type"],
+            )
+        else:
+            continue
+        await target_queue.enqueue(task)
+        restored += 1
+    return restored
+
+
 async def run_scan_task(task: ScanTask) -> None:
     if task.kind == "site":
         await scan_site(task.target_id, notify=task.notify, trigger_type=task.trigger_type, job_id=task.job_id)

@@ -33,7 +33,7 @@ from app.evidence_store import evidence_path
 from app.monitor import create_site, create_source, scan_site, scan_source, scheduler_loop
 from app.notifier import notification_worker_loop, process_pending_notifications
 from app.settings import database_settings, production_web_configuration_errors, queue_settings, runtime_settings, web_security_settings
-from app.task_queue import enqueue_site_scan, enqueue_source_scan, queue_backend_name, scan_worker_loop
+from app.task_queue import enqueue_site_scan, enqueue_source_scan, queue_backend_name, recover_queued_scan_tasks, scan_worker_loop
 from app.url_safety import UnsafeUrlError, validate_public_http_url
 
 
@@ -146,6 +146,7 @@ async def startup() -> None:
     runtime = runtime_settings()
     queue_backend = queue_backend_name()
     if runtime.start_background_workers and queue_backend == "in_process":
+        await recover_queued_scan_tasks()
         asyncio.create_task(scan_worker_loop())
         asyncio.create_task(scheduler_loop())
     if runtime.start_background_workers and runtime.start_notification_worker:

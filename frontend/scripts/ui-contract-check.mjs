@@ -45,6 +45,9 @@ const sourceFiles = [
   "src/features/settings/SettingsPage.tsx",
 ];
 
+const viteConfig = read("vite.config.ts");
+assert(viteConfig.includes('"http://127.0.0.1:8015"'), "Local preview must proxy to the active baseline-scan backend");
+
 const mojibakePattern = /(鎬|鐩|鎯|浜|鍙|瀹|璁|閫|妫|浠|搴|绔|缂|鏌|杩|婕|闇|瑙|绠|鍝|鏂|姝|鍔|鏁|鈥|锛|銆|絔|閹|娑|楠|瀨|缁|爘|噟)/;
 
 for (const file of sourceFiles) {

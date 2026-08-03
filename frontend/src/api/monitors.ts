@@ -23,6 +23,20 @@ export type ScanProgress = {
   failed_count?: number;
   product_count?: number | null;
   baseline_completed?: boolean;
+  quality?: ScanQuality;
+};
+
+export type ScanQuality = {
+  discovered_product_count?: number;
+  attempted_product_count?: number;
+  stored_product_count?: number;
+  rate_limited_count?: number;
+  blocked_count?: number;
+  fetch_failed_count?: number;
+  parse_failed_count?: number;
+  non_product_count?: number;
+  pending_retry_count?: number;
+  baseline_state?: "pending" | "complete" | "incomplete";
 };
 
 export type ScanJob = {
@@ -95,6 +109,10 @@ export async function createMonitorAndStartBaseline(input: CreateMonitorTaskInpu
 
 export function getScanJob(jobId: number | string): Promise<ScanJob> {
   return getJson<ScanJob>(`/api/scan-jobs/${jobId}`);
+}
+
+export function resumeScanJob(jobId: number | string): Promise<ScanJob> {
+  return sendJson<ScanJob>(`/api/scan-jobs/${jobId}/resume`, {});
 }
 
 export function updateSiteEnabled(siteId: number, enabled: boolean): Promise<Site> {

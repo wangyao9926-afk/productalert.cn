@@ -117,6 +117,9 @@ const baselineScanPage = read("src/features/monitors/BaselineScanPage.tsx");
 for (const text of ["setInterval", "已发现", "已处理", "查看产品库", "getScanJob", "triggerSiteScan"]) {
   assert(baselineScanPage.includes(text), `Baseline Scan Page is missing required behavior: ${text}`);
 }
+for (const text of ["resumeScanJob", "rate_limited_count", "pending_retry_count", "\u5f85\u9a8c\u8bc1\u5546\u54c1", "\u53d7\u9650\u6d41", "\u7ee7\u7eed\u626b\u63cf"]) {
+  assert(baselineScanPage.includes(text), `Baseline Scan Page is missing catalog quality behavior: ${text}`);
+}
 const createMonitorPage = read("src/features/monitors/CreateMonitorPage.tsx");
 assert(createMonitorPage.includes("createMonitorAndStartBaseline"), "Create Monitor Page must start the baseline scan");
 assert(createMonitorPage.includes("/baseline/"), "Create Monitor Page must navigate to baseline progress");
@@ -206,6 +209,9 @@ for (const text of ["通知策略", "真实规则 API", "事件类型", "严重�
 const products = read("src/features/products/ProductsPage.tsx");
 for (const text of ["产品库", "产品搜索", "价格", "库存", "来源站点", "关联变化", "查看详情", "真实 API", "演示数据"]) {
   assert(products.includes(text), `Products Page is missing required text: ${text}`);
+}
+for (const text of ["URLSearchParams", "product-thumb", "onError", "slice(0, 2)", "product-type"]) {
+  assert(products.includes(text), `Products Page is missing enriched product-library behavior: ${text}`);
 }
 
 const productDetail = read("src/features/products/ProductDetailPage.tsx");

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronLeft, CircleAlert, LoaderCircle, PackageSearch, RefreshCw, RotateCw } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
-import { getScanJob, type ScanJob, triggerSiteScan } from "../../api/monitors";
+import { getScanJob, resumeScanJob, type ScanJob, triggerSiteScan } from "../../api/monitors";
 
 const terminalStatuses = new Set(["success", "partial_success", "failed"]);
 
@@ -21,6 +21,7 @@ export function BaselineScanPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retrying, setRetrying] = useState(false);
+  const [resuming, setResuming] = useState(false);
 
   useEffect(() => {
     if (!jobId) return undefined;
@@ -58,6 +59,8 @@ export function BaselineScanPage() {
   const finished = terminalStatuses.has(status);
   const hasProducts = (progress?.product_count || 0) > 0;
   const canViewProducts = finished && status !== "failed" && hasProducts;
+  const quality = progress?.quality;
+  const baselineIncomplete = quality?.baseline_state === "incomplete";
   const title = useMemo(() => displayStatus(status), [status]);
 
   const retry = async () => {
@@ -70,6 +73,19 @@ export function BaselineScanPage() {
     } catch {
       setError("重新扫描未能创建，请检查后端服务和登录状态。");
       setRetrying(false);
+    }
+  };
+
+  const resume = async () => {
+    if (!jobId || !siteId) return;
+    setResuming(true);
+    setError("");
+    try {
+      const nextJob = await resumeScanJob(jobId);
+      navigate(`/monitors/${siteId}/baseline/${nextJob.id}`);
+    } catch {
+      setError("无法创建继续扫描任务，请稍后重试。");
+      setResuming(false);
     }
   };
 
@@ -109,6 +125,26 @@ export function BaselineScanPage() {
         <Metric label="产品总数" value={progress?.product_count ?? "—"} detail={progress?.baseline_completed ? "基线已保存" : "等待扫描完成"} tone="success" />
       </section>
 
+      {quality ? (
+        <section className="baseline-quality-grid" aria-label="目录采集质量">
+          <Metric label="已验证入库" value={quality.stored_product_count || 0} detail="已成功建立商品档案" tone="success" />
+          <Metric label="待验证商品" value={quality.pending_retry_count || 0} detail="将在可访问时继续验证" tone="warning" />
+          <Metric label="受限流" value={quality.rate_limited_count || 0} detail="官网暂时限制读取频率" tone="warning" />
+          <Metric
+            label="读取/解析失败"
+            value={(quality.blocked_count || 0) + (quality.fetch_failed_count || 0) + (quality.parse_failed_count || 0)}
+            detail="不会被当作已完成商品"
+            tone="warning"
+          />
+        </section>
+      ) : null}
+
+      {baselineIncomplete ? (
+        <div className="baseline-quality-warning" role="status">
+          当前仅显示已验证入库的商品，官网目录仍不完整；请在限流冷却后继续扫描。
+        </div>
+      ) : null}
+
       <section className="panel baseline-next-step">
         <div>
           <div className="panel-kicker">NEXT STEP</div>
@@ -122,6 +158,11 @@ export function BaselineScanPage() {
             </button>
           ) : null}
           {canViewProducts ? <Link className="primary-button" to={`/products?site_id=${siteId}`}>查看产品库</Link> : null}
+          {baselineIncomplete ? (
+            <button className="secondary-button" type="button" onClick={resume} disabled={resuming}>
+              <RotateCw size={16} /> {resuming ? "正在创建继续扫描…" : "继续扫描"}
+            </button>
+          ) : null}
         </div>
       </section>
     </main>

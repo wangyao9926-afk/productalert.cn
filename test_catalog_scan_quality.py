@@ -171,7 +171,8 @@ class CatalogBaselineQualityTests(unittest.TestCase):
                 result = asyncio.run(scan_site(site_id, trigger_type="baseline", job_id=job_id))
 
             self.assertEqual(result["progress"]["quality"]["stored_product_count"], 1)
-            self.assertEqual(result["progress"]["quality"]["rate_limited_count"], 2)
+            self.assertEqual(result["progress"]["quality"]["rate_limited_count"], 1)
+            self.assertEqual(result["progress"]["quality"]["pending_retry_count"], 1)
             self.assertEqual(result["progress"]["quality"]["baseline_state"], "incomplete")
             self.assertFalse(result["progress"]["baseline_completed"])
             with get_db() as db:

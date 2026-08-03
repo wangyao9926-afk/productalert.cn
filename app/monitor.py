@@ -1187,8 +1187,9 @@ async def scan_source(
                         ["source_id", "url", "title_hint"],
                         (source_id, candidate.url, candidate.title_hint),
                     )
-            for candidate in candidates:
+            for candidate_index, candidate in enumerate(candidates):
                 record_scan_candidate(job_id, candidate.url, status="pending", payload=candidate.payload)
+                rate_limited = False
                 try:
                     saved = await extract_and_store_product(
                         candidate,
@@ -1222,6 +1223,18 @@ async def scan_source(
                     if progress_state is not None:
                         progress_state["failed_count"] += 1
                     saved = None
+                    if exc.error_category == "rate_limited":
+                        rate_limited = True
+                        for deferred_candidate in candidates[candidate_index + 1:]:
+                            quality["pending_retry_count"] += 1
+                            record_scan_candidate(
+                                job_id,
+                                deferred_candidate.url,
+                                status="pending_retry",
+                                error_category="rate_limited",
+                                retry_after_seconds=exc.retry_after_seconds,
+                                payload=deferred_candidate.payload,
+                            )
                 except Exception:
                     quality["attempted_product_count"] += 1
                     quality["fetch_failed_count"] += 1
@@ -1237,6 +1250,8 @@ async def scan_source(
                     report_progress("extracting_products", "正在提取商品信息")
                 if saved:
                     baseline_products.append(saved)
+                if rate_limited:
+                    break
             finalize_scan_quality(quality)
             with get_db() as db:
                 total_products = fetchone(

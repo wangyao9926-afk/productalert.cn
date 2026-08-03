@@ -11,7 +11,7 @@ import {
   Tag,
   TrendingUp,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { loadOverview, type OverviewData } from "../../api/overview";
 import type { ChangeEvent, Product } from "../../types/api";
 
@@ -44,7 +44,40 @@ function relatedEvents(product: Product, events: ChangeEvent[]) {
   ));
 }
 
+function productType(product: Product) {
+  const text = `${product.title || ""} ${product.url || ""}`.toLowerCase();
+  if (/(bundle|set|kit)/.test(text)) return "套装";
+  if (/(case|cover|adapter|adaptor|nozzle|hose|mats|accessory)/.test(text)) return "配件";
+  if (/(clearance|sale|outlet)/.test(text)) return "清仓";
+  return product.item_type === "product_detail" ? "标准商品" : "商品";
+}
+
+function ProductThumbnail({ product }: { product: Product }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const initial = (product.title || "P").trim().slice(0, 1).toUpperCase();
+  return (
+    <span className="product-thumb" aria-label={`${product.title || "商品"} 缩略图`}>
+      {product.image_url && !imageFailed ? (
+        <img src={product.image_url} alt="" onError={() => setImageFailed(true)} />
+      ) : <span className="product-thumb-fallback">{initial}</span>}
+    </span>
+  );
+}
+
+function ProductHighlights({ product }: { product: Product }) {
+  const features = product.features?.slice(0, 2).filter(Boolean) || [];
+  return (
+    <div className="product-highlights">
+      <span className="product-type">{productType(product)}</span>
+      {features.length ? features.map((feature) => <span className="product-feature" key={feature}>{feature}</span>) : (
+        product.description ? <span className="product-description">{product.description.slice(0, 90)}</span> : null
+      )}
+    </div>
+  );
+}
+
 export function ProductsPage() {
+  const location = useLocation();
   const [data, setData] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -57,17 +90,24 @@ export function ProductsPage() {
 
   useEffect(refresh, []);
 
+  const selectedSiteId = useMemo(() => {
+    const value = new URLSearchParams(location.search).get("site_id");
+    const siteId = Number(value);
+    return Number.isFinite(siteId) && siteId > 0 ? siteId : null;
+  }, [location.search]);
+
   const rows = useMemo(() => {
     if (!data) return [];
     const normalizedQuery = query.trim().toLowerCase();
     return data.products
+      .filter((product) => selectedSiteId === null || product.site_id === selectedSiteId)
       .map((product) => ({ product, events: relatedEvents(product, data.events) }))
       .filter(({ product }) => {
         const queryMatch = !normalizedQuery || `${product.title || ""} ${product.site_name || ""} ${product.url || ""}`.toLowerCase().includes(normalizedQuery);
         const availabilityMatch = availability === "all" || availabilityText(product.availability) === availability;
         return queryMatch && availabilityMatch;
       });
-  }, [availability, data, query]);
+  }, [availability, data, query, selectedSiteId]);
 
   const changedCount = rows.filter((row) => row.events.length > 0).length;
   const inStockCount = rows.filter((row) => availabilityText(row.product.availability) === "有货").length;
@@ -82,7 +122,7 @@ export function ProductsPage() {
         <div>
           <div className="eyebrow">PRODUCT LIBRARY</div>
           <h1>产品库</h1>
-          <p>把官网抓取结果沉淀为产品档案，集中查看价格、库存、来源站点和关联变化。</p>
+          <p>把官网抓取结果沉淀为产品档案，集中查看缩略图、卖点、价格、库存和原站链接。</p>
           <div className={`api-status-pill ${data.live ? "success" : "warning"}`}>
             {data.live ? "真实 API" : "演示数据"} · {data.message}
           </div>
@@ -94,7 +134,7 @@ export function ProductsPage() {
       </header>
 
       <section className="product-summary-grid" aria-label="产品库概览">
-        <ProductMetric label="产品总数" value={rows.length} detail="当前筛选范围" icon={<Boxes size={18} />} tone="blue" />
+        <ProductMetric label="已验证商品" value={rows.length} detail={selectedSiteId ? "当前站点范围" : "当前筛选范围"} icon={<Boxes size={18} />} tone="blue" />
         <ProductMetric label="有货产品" value={inStockCount} detail="库存可售状态" icon={<PackageCheck size={18} />} tone="green" />
         <ProductMetric label="关联变化" value={changedCount} detail="存在变化事件的产品" icon={<TrendingUp size={18} />} tone="orange" />
         <ProductMetric label="来源站点" value={new Set(rows.map((row) => row.product.site_id)).size} detail="覆盖官网数量" icon={<Tag size={18} />} tone="purple" />
@@ -111,7 +151,7 @@ export function ProductsPage() {
           <option value="售罄">售罄</option>
           <option value="未知库存">未知库存</option>
         </select>
-        <span className="monitor-count">{rows.length} 个产品</span>
+        <span className="monitor-count">{rows.length} 个商品</span>
       </section>
 
       <section className="panel products-table-panel">
@@ -120,7 +160,7 @@ export function ProductsPage() {
             <div className="panel-kicker">PRODUCTS</div>
             <h2>产品档案</h2>
           </div>
-          <span className="tag">价格 / 库存 / 来源站点 / 关联变化</span>
+          <span className="tag">缩略图 / 卖点 / 价格 / 库存 / 原站链接</span>
         </div>
         {rows.length ? (
           <div className="products-table-wrap">
@@ -139,9 +179,13 @@ export function ProductsPage() {
               <tbody>
                 {rows.map(({ product, events }) => (
                   <tr key={product.id}>
-                    <td>
-                      <strong>{product.title || "未命名产品"}</strong>
-                      <span className="table-sub">{product.url || product.display_url || "待采集官网链接"}</span>
+                    <td className="product-identity-cell">
+                      <ProductThumbnail product={product} />
+                      <div className="product-identity-copy">
+                        <strong>{product.title || "未命名产品"}</strong>
+                        <ProductHighlights product={product} />
+                        <span className="table-sub">{product.url || product.display_url || "待采集官网链接"}</span>
+                      </div>
                     </td>
                     <td>{product.site_name || "未知站点"}<span className="table-sub">{product.source_type || "未知来源"}</span></td>
                     <td><strong>{money(product)}</strong>{product.compare_at_price ? <span className="table-sub">原价 {product.compare_at_price}</span> : null}</td>

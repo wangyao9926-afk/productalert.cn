@@ -119,6 +119,10 @@ function ruleSummary(rule: NotificationRule) {
     severity: severityLabels[rule.min_severity] || rule.min_severity,
     status: inboxStatusLabels[rule.inbox_status] || rule.inbox_status,
     channel: channelLabels[rule.channel] || rule.channel,
+    conditions: [
+      rule.max_price_amount !== null && rule.max_price_amount !== undefined ? `价格 ≤ ${rule.max_price_amount}` : "",
+      rule.require_in_stock ? "仅有货" : "",
+    ].filter(Boolean).join(" · ") || "无商品条件",
   };
 }
 
@@ -152,6 +156,8 @@ export function NotificationsPage() {
   const [newRuleName, setNewRuleName] = useState("新品与价格提醒");
   const [newRuleChannel, setNewRuleChannel] = useState<"webhook" | "wecom" | "feishu">("wecom");
   const [newRuleTarget, setNewRuleTarget] = useState("");
+  const [newRuleMaxPrice, setNewRuleMaxPrice] = useState("");
+  const [newRuleRequireInStock, setNewRuleRequireInStock] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const refresh = () => {
@@ -218,6 +224,8 @@ export function NotificationsPage() {
         event_types: ["product_new", "variant_new", "price_change", "availability_change"],
         min_severity: "normal",
         inbox_status: "unread",
+        max_price_amount: newRuleMaxPrice.trim() ? Number(newRuleMaxPrice) : undefined,
+        require_in_stock: newRuleRequireInStock,
       });
       setRules((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       setNewRuleTarget("");
@@ -260,6 +268,8 @@ export function NotificationsPage() {
           <label className="field-label">规则名称<input value={newRuleName} onChange={(event) => setNewRuleName(event.target.value)} /></label>
           <label className="field-label">通道<select value={newRuleChannel} onChange={(event) => setNewRuleChannel(event.target.value as "webhook" | "wecom" | "feishu")}><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="webhook">通用 Webhook</option></select></label>
           <label className="field-label">机器人 Webhook URL<input type="url" required placeholder="https://..." value={newRuleTarget} onChange={(event) => setNewRuleTarget(event.target.value)} /></label>
+          <label className="field-label">价格上限（可选）<input type="number" min="0" step="0.01" placeholder="例如 500" value={newRuleMaxPrice} onChange={(event) => setNewRuleMaxPrice(event.target.value)} /></label>
+          <label className="field-label checkbox-field"><input type="checkbox" checked={newRuleRequireInStock} onChange={(event) => setNewRuleRequireInStock(event.target.checked)} />仅在有货时通知</label>
           <button className="primary-button" type="submit" disabled={creatingRule}>{creatingRule ? "创建中..." : "启用推送"}</button>
         </div>
       </form>
@@ -289,6 +299,7 @@ export function NotificationsPage() {
                 <strong>{rule.name}</strong>
                 <span>事件类型：{summary.types}</span>
                 <span>严重程度：{summary.severity} 起推 · 处理状态：{summary.status}</span>
+                <span>商品条件：{summary.conditions}</span>
                 <span>渠道：{summary.channel} · {rule.enabled ? "已启用" : "已停用"}</span>
                 <span className="target-cell">{rule.site_name || "全部站点"} · {rule.target_url}</span>
               </article>

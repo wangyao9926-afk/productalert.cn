@@ -139,6 +139,8 @@ def migrate_existing_tables(db: sqlite3.Connection) -> None:
     ensure_column(db, "notification_rules", "event_types_json", "TEXT NOT NULL DEFAULT '[\"product_new\"]'")
     ensure_column(db, "notification_rules", "min_severity", "TEXT NOT NULL DEFAULT 'normal'")
     ensure_column(db, "notification_rules", "inbox_status", "TEXT NOT NULL DEFAULT 'unread'")
+    ensure_column(db, "notification_rules", "max_price_amount", "REAL")
+    ensure_column(db, "notification_rules", "require_in_stock", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(db, "monitor_sources", "product_baseline_completed_at", "TEXT")
     ensure_column(db, "monitor_sources", "failure_count", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(db, "monitor_sources", "next_scan_after", "TEXT")

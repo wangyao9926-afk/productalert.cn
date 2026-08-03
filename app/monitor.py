@@ -297,6 +297,18 @@ def enqueue_event_notification_if_enabled(
             continue
         if str(rule.get("inbox_status") or "unread") != event_inbox_status:
             continue
+        matched_rule = True
+        max_price_amount = rule.get("max_price_amount")
+        if max_price_amount is not None:
+            if not product or product.get("price_amount") is None:
+                continue
+            try:
+                if float(product["price_amount"]) > float(max_price_amount):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        if rule.get("require_in_stock") and (not product or product.get("availability") not in {"in_stock", "available"}):
+            continue
         safe_target_url = validate_public_http_url(rule["target_url"])
         payload = change_event_payload(event, product)
         insert_ignore(
@@ -315,7 +327,6 @@ def enqueue_event_notification_if_enabled(
                 now_iso(),
             ),
         )
-        matched_rule = True
     if matched_rule:
         return
     if not should_notify_event(site, event_type):

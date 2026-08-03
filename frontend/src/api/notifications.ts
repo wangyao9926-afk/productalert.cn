@@ -32,6 +32,8 @@ export type NotificationRule = {
   event_types: string[];
   min_severity: "low" | "normal" | "high" | "critical" | string;
   inbox_status: "unread" | "important" | "read" | "false_positive" | "follow_up" | string;
+  max_price_amount?: number | null;
+  require_in_stock?: boolean;
   enabled: boolean;
   created_at?: string | null;
   updated_at?: string | null;
@@ -44,6 +46,8 @@ export type CreateNotificationRuleInput = {
   event_types: string[];
   min_severity?: "low" | "normal" | "high" | "critical";
   inbox_status?: "unread" | "important" | "read" | "false_positive" | "follow_up";
+  max_price_amount?: number;
+  require_in_stock?: boolean;
 };
 
 export function loadNotifications(siteId?: number): Promise<NotificationRecord[]> {

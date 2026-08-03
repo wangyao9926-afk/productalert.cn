@@ -1,0 +1,2 @@
+ALTER TABLE notification_rules ADD COLUMN IF NOT EXISTS max_price_amount DOUBLE PRECISION;
+ALTER TABLE notification_rules ADD COLUMN IF NOT EXISTS require_in_stock BOOLEAN NOT NULL DEFAULT FALSE;

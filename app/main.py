@@ -102,6 +102,8 @@ class NotificationRuleCreate(BaseModel):
     event_types: list[NotificationEvent] = Field(default_factory=lambda: ["product_new"])
     min_severity: SeverityLevel = "normal"
     inbox_status: InboxStatus = "unread"
+    max_price_amount: float | None = Field(default=None, ge=0)
+    require_in_stock: bool = False
     enabled: bool = True
 
 
@@ -1121,6 +1123,7 @@ async def list_audit_logs(site_id: int | None = None, user: dict = CurrentUser) 
 def normalize_notification_rule(row: dict) -> dict:
     rule = row_to_dict(row)
     rule["enabled"] = bool(rule.get("enabled"))
+    rule["require_in_stock"] = bool(rule.get("require_in_stock"))
     if not rule.get("event_types"):
         rule["event_types"] = ["product_new"]
     return rule
@@ -1178,6 +1181,8 @@ async def create_notification_rule(payload: NotificationRuleCreate, user: dict =
                 "event_types": json_dumps(payload.event_types),
                 "min_severity": payload.min_severity,
                 "inbox_status": payload.inbox_status,
+                "max_price_amount": payload.max_price_amount,
+                "require_in_stock": payload.require_in_stock,
                 "enabled": payload.enabled,
             },
         )
@@ -1207,6 +1212,8 @@ async def create_notification_rule(payload: NotificationRuleCreate, user: dict =
             "event_types": payload.event_types,
             "min_severity": payload.min_severity,
             "inbox_status": payload.inbox_status,
+            "max_price_amount": payload.max_price_amount,
+            "require_in_stock": payload.require_in_stock,
         },
     )
     return normalize_notification_rule(row)

@@ -5,12 +5,29 @@ import unittest
 from uuid import uuid4
 from unittest.mock import AsyncMock, patch
 
-from app.crawler import ExtractedProduct, ProductCandidate, ProductFetchError, discover_product_candidates, fetch_result_from_response, raise_for_fetch_failure
+from app.crawler import ExtractedProduct, ProductCandidate, ProductFetchError, discover_product_candidates, fetch_result_from_response, raise_for_fetch_failure, shopify_product_candidates
 from app.db import execute_sql, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict
 from app.monitor import create_scan_job, record_scan_candidate, scan_site
+from app.rate_limit import domain_cooldown_remaining, record_domain_rate_limit, record_domain_success, reset_domain_rate_limits
 
 
 class CatalogDiscoveryTests(unittest.TestCase):
+    def test_rate_limit_cooldown_honors_retry_after_then_uses_bounded_backoff(self) -> None:
+        reset_domain_rate_limits()
+        with patch("app.rate_limit.time.monotonic", return_value=100.0):
+            self.assertEqual(record_domain_rate_limit("https://store.example.com/products/pump", retry_after_seconds=60), 60)
+            self.assertEqual(domain_cooldown_remaining("https://store.example.com/products/other"), 60.0)
+
+        with patch("app.rate_limit.time.monotonic", return_value=200.0):
+            self.assertEqual(record_domain_rate_limit("https://retry.example.com/products/pump"), 30)
+        with patch("app.rate_limit.time.monotonic", return_value=201.0):
+            self.assertEqual(record_domain_rate_limit("https://retry.example.com/products/other"), 60)
+            self.assertEqual(domain_cooldown_remaining("https://retry.example.com/"), 60.0)
+
+        record_domain_success("https://retry.example.com/products/other")
+        with patch("app.rate_limit.time.monotonic", return_value=300.0):
+            self.assertEqual(record_domain_rate_limit("https://retry.example.com/products/final"), 30)
+
     def test_product_discovery_excludes_non_product_sitemap_urls(self) -> None:
         candidates = discover_product_candidates(
             "https://store.example.com/",
@@ -52,6 +69,19 @@ class CatalogDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.error_category, "rate_limited")
         self.assertEqual(raised.exception.http_status, 429)
+
+    def test_shopify_catalog_rate_limit_registers_domain_cooldown(self) -> None:
+        response = type("Response", (), {"status_code": 429, "headers": {"Retry-After": "60"}})()
+        client = type("Client", (), {"get": AsyncMock(return_value=response)})()
+
+        with (
+            patch("app.crawler.validate_public_http_url", side_effect=lambda url: url),
+            patch("app.crawler.record_domain_rate_limit") as record_cooldown,
+        ):
+            candidates = asyncio.run(shopify_product_candidates(client, "https://store.example.com/"))
+
+        self.assertEqual(candidates, [])
+        record_cooldown.assert_called_once_with("https://store.example.com/products.json", 60)
 
 
 class CatalogCandidatePersistenceTests(unittest.TestCase):
@@ -175,6 +205,7 @@ class CatalogBaselineQualityTests(unittest.TestCase):
             self.assertEqual(result["progress"]["quality"]["pending_retry_count"], 1)
             self.assertEqual(result["progress"]["quality"]["baseline_state"], "incomplete")
             self.assertFalse(result["progress"]["baseline_completed"])
+            self.assertEqual(result["status"], "partial_success")
             with get_db() as db:
                 job = row_to_dict(fetchone(db, "SELECT * FROM scan_jobs WHERE id = ?", (job_id,)))
             self.assertEqual(job["status"], "partial_success")

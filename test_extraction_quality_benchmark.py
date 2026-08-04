@@ -2,10 +2,31 @@ from __future__ import annotations
 
 import unittest
 
+from app.crawler import product_from_html
 from app.extraction_quality_benchmark import BenchmarkCase, default_cases, run_benchmark
 
 
 class ExtractionQualityBenchmarkTests(unittest.TestCase):
+    def test_product_features_ignore_navigation_menu_items(self) -> None:
+        product = product_from_html(
+            "https://benchmark.example.com/products/orbit-pump",
+            """
+                <html><head><meta property="og:title" content="Orbit Pump"></head><body>
+                  <header><nav><ul><li>BEST SELLERS</li><li>BACK TO SCHOOL</li></ul></nav></header>
+                  <main><h1>Orbit Pump</h1><section class="product-features"><ul>
+                    <li>Inflates a camping pad in 60 seconds</li>
+                    <li>Only weighs 96 grams for backpacking</li>
+                  </ul></section></main>
+                  <footer><a>Shipping policy and support</a></footer>
+                </body></html>
+            """,
+        )
+
+        self.assertEqual(
+            product.features,
+            ["Inflates a camping pad in 60 seconds", "Only weighs 96 grams for backpacking"],
+        )
+
     def test_report_counts_expected_html_product_fields(self) -> None:
         case = BenchmarkCase(
             name="json-ld-product",

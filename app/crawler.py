@@ -11,7 +11,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from app.rate_limit import wait_for_domain_slot
+from app.rate_limit import record_domain_rate_limit, record_domain_success, wait_for_domain_slot
 from app.render_worker import try_render_page
 from app.url_safety import UnsafeUrlError, canonicalize_url, resolve_redirect_url, validate_public_http_url
 
@@ -280,8 +280,11 @@ async def fetch_product_result(client: httpx.AsyncClient, url: str) -> FetchResu
                 headers=dict(response.headers),
                 content=response.text,
             )
+            if result.error_category == "rate_limited":
+                record_domain_rate_limit(safe_url, result.retry_after_seconds)
             if result.error_category:
                 return result
+            record_domain_success(safe_url)
             content_type = response.headers.get("content-type", "")
             if content_type and not any(kind in content_type for kind in ("text", "html")):
                 return FetchResult(safe_url, response.status_code, None, "unsupported_content", None)
@@ -519,8 +522,15 @@ async def shopify_product_candidates(client: httpx.AsyncClient, source_url: str,
         try:
             await wait_for_domain_slot(f"{safe_root.rstrip('/')}/products.json")
             res = await client.get(f"{safe_root.rstrip('/')}/products.json", params={"limit": 250, "page": page}, follow_redirects=False)
+            if res.status_code == 429:
+                retry_after = res.headers.get("Retry-After", "").strip()
+                record_domain_rate_limit(
+                    f"{safe_root.rstrip('/')}/products.json",
+                    int(retry_after) if retry_after.isdigit() else None,
+                )
             if res.status_code >= 400:
                 break
+            record_domain_success(f"{safe_root.rstrip('/')}/products.json")
             data = res.json()
         except (httpx.HTTPError, json.JSONDecodeError):
             break
@@ -867,14 +877,33 @@ def extraction_quality(
 
 def extract_features(soup: BeautifulSoup, raw_text: str) -> list[str]:
     features: list[str] = []
-    for item in soup.select("li, [class*=feature], [class*=highlight], [class*=spec], [class*=benefit]"):
+    content_root = soup.select_one("main, [role='main'], #MainContent, [id*='product']") or soup.body or soup
+    navigation_labels = {
+        "best sellers",
+        "back to school",
+        "discover",
+        "products",
+        "shop all",
+        "new arrivals",
+    }
+
+    for item in content_root.select("li"):
         text = clean_text(item.get_text(" ", strip=True))
-        if 8 <= len(text) <= 180 and text not in features:
+        if 8 <= len(text) <= 180 and text.lower() not in navigation_labels and text not in features:
             features.append(text)
         if len(features) >= 8:
             return features
 
-    sentences = re.split(r"(?<=[。.!?])\s+", raw_text)
+    if not features:
+        for item in content_root.select("[class*=feature], [class*=highlight], [class*=spec], [class*=benefit]"):
+            text = clean_text(item.get_text(" ", strip=True))
+            if 8 <= len(text) <= 180 and text.lower() not in navigation_labels and text not in features:
+                features.append(text)
+            if len(features) >= 8:
+                return features
+
+    content_text = clean_text(content_root.get_text(" ", strip=True)) or raw_text
+    sentences = re.split(r"(?<=[。.!?])\s+", content_text)
     for sentence in sentences:
         text = clean_text(sentence)
         lowered = text.lower()

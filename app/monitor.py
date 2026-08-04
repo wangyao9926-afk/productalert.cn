@@ -1560,6 +1560,7 @@ async def scan_site(site_id: int, notify: bool = True, trigger_type: str = "manu
         "new_products": new_products,
         "sources": results,
         "errors": errors,
+        "status": status,
         "progress": {
             "phase": "completed" if status == "success" else status,
             **progress_state,

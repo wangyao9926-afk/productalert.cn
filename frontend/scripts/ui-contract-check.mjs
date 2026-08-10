@@ -134,6 +134,10 @@ for (const text of ["deleteSite", "window.confirm", "删除监控", "Trash2"]) {
   assert(monitorsPage.includes(text), `Monitor Center is missing safe delete support: ${text}`);
 }
 
+for (const text of ["const [query, setQuery]", "onChange={(event) => setQuery(event.target.value)}", "filteredRows", "暂无匹配的监控任务"]) {
+  assert(monitorsPage.includes(text), `Monitor Center search must be functional: ${text}`);
+}
+
 const notificationsApi = read("src/api/notifications.ts");
 for (const text of ["loadNotifications", "retryNotification", "/api/notifications", "/retry", "NotificationRecord"]) {
   assert(notificationsApi.includes(text), `Notifications API client is missing required text: ${text}`);
@@ -218,6 +222,10 @@ for (const text of ["产品库", "产品搜索", "价格", "库存", "来源站�
 }
 for (const text of ["URLSearchParams", "product-thumb", "onError", "slice(0, 2)", "product-type"]) {
   assert(products.includes(text), `Products Page is missing enriched product-library behavior: ${text}`);
+}
+
+for (const text of ["selectedSiteId", "setSelectedSiteId", "全部站点", "按站点查看", "site-filter-select"]) {
+  assert(products.includes(text), `Products Page must support source-site filtering: ${text}`);
 }
 
 const productDetail = read("src/features/products/ProductDetailPage.tsx");

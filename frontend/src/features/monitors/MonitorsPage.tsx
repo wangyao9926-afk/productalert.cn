@@ -11,7 +11,6 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
-  SlidersHorizontal,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -99,6 +98,8 @@ function summarize(rows: MonitorRow[]) {
 export function MonitorsPage() {
   const [data, setData] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<MonitorStatus | "all">("all");
   const [action, setAction] = useState<ActionState>({ id: null, kind: null, message: "", tone: "idle" });
 
   const refresh = () => {
@@ -110,6 +111,14 @@ export function MonitorsPage() {
 
   const rows = useMemo(() => (data ? buildMonitorRows(data) : []), [data]);
   const stats = useMemo(() => summarize(rows), [rows]);
+  const filteredRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      const queryMatch = !normalizedQuery || `${row.name} ${row.url} ${row.type}`.toLowerCase().includes(normalizedQuery);
+      const statusMatch = statusFilter === "all" || row.status === statusFilter;
+      return queryMatch && statusMatch;
+    });
+  }, [query, rows, statusFilter]);
 
   const actionErrorMessage = (error: unknown) => {
     if (error instanceof ApiError && error.status === 401) return "请先登录 ProductAlert API，再执行监控操作。";
@@ -190,16 +199,15 @@ export function MonitorsPage() {
       <section className="panel monitor-toolbar" aria-label="监控筛选">
         <div className="monitor-search">
           <Search size={15} aria-hidden="true" />
-          <input type="search" placeholder="搜索品牌、站点或目标 URL" aria-label="搜索品牌、站点或目标 URL" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="搜索监控：站点名称、URL 或类型" aria-label="搜索监控" />
         </div>
-        <button className="button button-secondary" type="button">
-          <SlidersHorizontal size={15} aria-hidden="true" />
-          <span>筛选</span>
-        </button>
-        <button className="button button-secondary" type="button">
-          <Play size={15} aria-hidden="true" />
-          <span>批量扫描</span>
-        </button>
+        <select className="select-input compact-select" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as MonitorStatus | "all")} aria-label="按状态筛选">
+          <option value="all">全部状态</option>
+          <option value="healthy">正常</option>
+          <option value="warning">需关注</option>
+          <option value="paused">已暂停</option>
+        </select>
+        {(query || statusFilter !== "all") ? <button className="button button-secondary" type="button" onClick={() => { setQuery(""); setStatusFilter("all"); }}>清除筛选</button> : null}
       </section>
 
       {action.message ? <div className={`operation-message ${action.tone}`} role="status">{action.message}</div> : null}
@@ -210,11 +218,13 @@ export function MonitorsPage() {
             <div className="panel-kicker">TASKS</div>
             <h2>全部监控任务</h2>
           </div>
-          <span className="monitor-count">{rows.length} 个任务</span>
+          <span className="monitor-count">{filteredRows.length === rows.length ? `${rows.length} 个任务` : `${filteredRows.length} / ${rows.length} 个任务`}</span>
         </div>
 
         {rows.length === 0 ? (
           <EmptyMonitors />
+        ) : filteredRows.length === 0 ? (
+          <div className="empty-state"><div className="empty-icon"><Search size={20} /></div><h3>暂无匹配的监控任务</h3><p>请清除搜索词或调整状态筛选。</p></div>
         ) : (
           <div className="monitors-table-wrap">
             <table className="monitors-table">
@@ -231,7 +241,7 @@ export function MonitorsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {filteredRows.map((row) => (
                   <MonitorTableRow key={row.id} row={row} action={action} onScan={runScan} onToggle={toggleEnabled} onDelete={removeMonitor} />
                 ))}
               </tbody>

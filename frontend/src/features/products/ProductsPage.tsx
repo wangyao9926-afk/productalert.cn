@@ -52,6 +52,11 @@ function productType(product: Product) {
   return product.item_type === "product_detail" ? "标准商品" : "商品";
 }
 
+function siteIdFromSearch(search: string) {
+  const siteId = Number(new URLSearchParams(search).get("site_id"));
+  return Number.isFinite(siteId) && siteId > 0 ? siteId : null;
+}
+
 function ProductThumbnail({ product }: { product: Product }) {
   const [imageFailed, setImageFailed] = useState(false);
   const initial = (product.title || "P").trim().slice(0, 1).toUpperCase();
@@ -82,6 +87,7 @@ export function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState("all");
+  const [selectedSiteId, setSelectedSiteId] = useState<number | null>(() => siteIdFromSearch(location.search));
 
   const refresh = () => {
     setLoading(true);
@@ -90,11 +96,7 @@ export function ProductsPage() {
 
   useEffect(refresh, []);
 
-  const selectedSiteId = useMemo(() => {
-    const value = new URLSearchParams(location.search).get("site_id");
-    const siteId = Number(value);
-    return Number.isFinite(siteId) && siteId > 0 ? siteId : null;
-  }, [location.search]);
+  useEffect(() => setSelectedSiteId(siteIdFromSearch(location.search)), [location.search]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -151,6 +153,13 @@ export function ProductsPage() {
           <option value="售罄">售罄</option>
           <option value="未知库存">未知库存</option>
         </select>
+        <label className="site-filter-select">
+          <span>按站点查看</span>
+          <select value={selectedSiteId?.toString() || "all"} onChange={(event) => setSelectedSiteId(event.target.value === "all" ? null : Number(event.target.value))} aria-label="按站点查看">
+            <option value="all">全部站点</option>
+            {data.sites.map((site) => <option value={site.id} key={site.id}>{site.name || site.url}</option>)}
+          </select>
+        </label>
         <span className="monitor-count">{rows.length} 个商品</span>
       </section>
 

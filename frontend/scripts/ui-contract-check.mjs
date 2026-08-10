@@ -120,6 +120,12 @@ for (const text of ["setInterval", "已发现", "已处理", "查看产品库", 
 for (const text of ["resumeScanJob", "rate_limited_count", "pending_retry_count", "\u5f85\u9a8c\u8bc1\u5546\u54c1", "\u53d7\u9650\u6d41", "\u7ee7\u7eed\u626b\u63cf"]) {
   assert(baselineScanPage.includes(text), `Baseline Scan Page is missing catalog quality behavior: ${text}`);
 }
+for (const text of ["catalog_reference_count", "coverage_state", "discovery_source_counts", "目录覆盖", "未取得公开目录总数"]) {
+  assert(baselineScanPage.includes(text), `Baseline Scan Page is missing catalog coverage behavior: ${text}`);
+}
+for (const text of ["catalog_reference_count", "coverage_state", "discovery_source_counts", "adapter_attempts"]) {
+  assert(monitorApi.includes(text), `Monitor API types must expose catalog coverage field: ${text}`);
+}
 const createMonitorPage = read("src/features/monitors/CreateMonitorPage.tsx");
 assert(createMonitorPage.includes("createMonitorAndStartBaseline"), "Create Monitor Page must start the baseline scan");
 assert(createMonitorPage.includes("/baseline/"), "Create Monitor Page must navigate to baseline progress");

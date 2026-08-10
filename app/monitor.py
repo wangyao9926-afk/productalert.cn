@@ -4,8 +4,9 @@ import asyncio
 import difflib
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from app.crawler import ProductCandidate, ProductFetchError, canonical_candidate_key, classify_product_url, discover_candidates, extract_candidate_product, extract_source_text, normalize_url
+from app.crawler import ProductCandidate, ProductFetchError, canonical_candidate_key, classify_product_url, discover_catalog, extract_candidate_product, extract_source_text, normalize_url
 from app.db import DB_BACKEND, boolean_true_sql, execute_sql, fetchall, fetchone, get_db, insert_ignore, insert_row, is_integrity_error, json_dumps, row_to_dict, select_by_id, storage_column, update_by_id, update_by_id_when
 from app.evidence_store import load_screenshot, save_screenshot
 from app.notifier import change_event_payload, should_notify_event
@@ -143,7 +144,7 @@ def record_scan_candidate(
         )
 
 
-def new_scan_quality(discovered_product_count: int = 0) -> dict[str, int | str]:
+def new_scan_quality(discovered_product_count: int = 0) -> dict[str, Any]:
     return {
         "discovered_product_count": discovered_product_count,
         "attempted_product_count": 0,
@@ -155,28 +156,48 @@ def new_scan_quality(discovered_product_count: int = 0) -> dict[str, int | str]:
         "non_product_count": 0,
         "pending_retry_count": 0,
         "baseline_state": "pending",
+        "catalog_reference_count": None,
+        "discovery_source_counts": {},
+        "adapter_attempts": [],
+        "coverage_state": "pending",
     }
 
 
-def quality_has_unverified_products(quality: dict[str, int | str]) -> bool:
+def quality_has_unverified_products(quality: dict[str, Any]) -> bool:
     return any(
         int(quality[key]) > 0
         for key in ("rate_limited_count", "blocked_count", "fetch_failed_count", "parse_failed_count", "pending_retry_count")
     )
 
 
-def finalize_scan_quality(quality: dict[str, int | str]) -> dict[str, int | str]:
+def finalize_scan_quality(quality: dict[str, Any]) -> dict[str, Any]:
     quality["baseline_state"] = "incomplete" if quality_has_unverified_products(quality) else "complete"
+    reference_count = quality.get("catalog_reference_count")
+    stored_count = int(quality.get("stored_product_count", 0))
+    if quality["baseline_state"] == "incomplete":
+        quality["coverage_state"] = "incomplete"
+    elif isinstance(reference_count, int) and stored_count >= reference_count:
+        quality["coverage_state"] = "verified"
+    else:
+        quality["coverage_state"] = "best_effort"
     return quality
 
 
-def aggregate_scan_quality(results: list[dict]) -> dict[str, int | str]:
+def aggregate_scan_quality(results: list[dict]) -> dict[str, Any]:
     quality = new_scan_quality()
     numeric_keys = [key for key, value in quality.items() if isinstance(value, int)]
+    reference_counts: list[int] = []
     for result in results:
         source_quality = result.get("progress", {}).get("quality", {})
         for key in numeric_keys:
             quality[key] += int(source_quality.get(key, 0))
+        source_reference = source_quality.get("catalog_reference_count")
+        if isinstance(source_reference, int):
+            reference_counts.append(source_reference)
+        for source, count in source_quality.get("discovery_source_counts", {}).items():
+            quality["discovery_source_counts"][source] = quality["discovery_source_counts"].get(source, 0) + int(count)
+        quality["adapter_attempts"].extend(source_quality.get("adapter_attempts", []))
+    quality["catalog_reference_count"] = sum(reference_counts) if reference_counts else None
     return finalize_scan_quality(quality)
 
 
@@ -1143,7 +1164,7 @@ async def scan_source(
 
     try:
         report_progress("discovering", "正在发现商品链接")
-        candidates = await discover_candidates(
+        discovery = await discover_catalog(
             source_data["url"],
             include_keywords=include_keywords,
             exclude_keywords=exclude_keywords,
@@ -1151,8 +1172,11 @@ async def scan_source(
             require_relevance=require_relevance,
             selector=source_data.get("selector"),
         )
-        candidates = [candidate for candidate in candidates if classify_product_url(candidate.url)[0] == "product_detail"]
+        candidates = discovery.candidates
         quality = new_scan_quality(len(candidates))
+        quality["catalog_reference_count"] = discovery.reference_count
+        quality["discovery_source_counts"] = discovery.discovery_source_counts
+        quality["adapter_attempts"] = discovery.adapter_attempts
         local_progress["discovered_count"] = len(candidates)
         if progress_state is not None:
             progress_state["discovered_count"] += len(candidates)

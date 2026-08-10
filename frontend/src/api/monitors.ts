@@ -37,6 +37,15 @@ export type ScanQuality = {
   non_product_count?: number;
   pending_retry_count?: number;
   baseline_state?: "pending" | "complete" | "incomplete";
+  catalog_reference_count?: number | null;
+  discovery_source_counts?: Record<string, number>;
+  adapter_attempts?: Array<{
+    adapter: string;
+    status: "available" | "not_applicable" | "limited" | "blocked" | "failed";
+    http_status?: number;
+    reason?: string;
+  }>;
+  coverage_state?: "pending" | "verified" | "best_effort" | "incomplete" | "failed";
 };
 
 export type ScanJob = {

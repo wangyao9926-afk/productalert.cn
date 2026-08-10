@@ -61,6 +61,10 @@ export function BaselineScanPage() {
   const canViewProducts = finished && status !== "failed" && hasProducts;
   const quality = progress?.quality;
   const baselineIncomplete = quality?.baseline_state === "incomplete";
+  const catalogReferenceCount = quality?.catalog_reference_count;
+  const coverageState = quality?.coverage_state;
+  const discoverySources = Object.entries(quality?.discovery_source_counts || {});
+  const adapterIssues = (quality?.adapter_attempts || []).filter((attempt) => ["limited", "blocked", "failed"].includes(attempt.status));
   const title = useMemo(() => displayStatus(status), [status]);
 
   const retry = async () => {
@@ -126,17 +130,39 @@ export function BaselineScanPage() {
       </section>
 
       {quality ? (
-        <section className="baseline-quality-grid" aria-label="目录采集质量">
-          <Metric label="已验证入库" value={quality.stored_product_count || 0} detail="已成功建立商品档案" tone="success" />
-          <Metric label="待验证商品" value={quality.pending_retry_count || 0} detail="将在可访问时继续验证" tone="warning" />
-          <Metric label="受限流" value={quality.rate_limited_count || 0} detail="官网暂时限制读取频率" tone="warning" />
-          <Metric
-            label="读取/解析失败"
-            value={(quality.blocked_count || 0) + (quality.fetch_failed_count || 0) + (quality.parse_failed_count || 0)}
-            detail="不会被当作已完成商品"
-            tone="warning"
-          />
-        </section>
+        <>
+          <section className="baseline-quality-grid" aria-label="目录采集质量">
+            <Metric label="已验证入库" value={quality.stored_product_count || 0} detail="已成功建立商品档案" tone="success" />
+            <Metric label="待验证商品" value={quality.pending_retry_count || 0} detail="将在可访问时继续验证" tone="warning" />
+            <Metric label="受限流" value={quality.rate_limited_count || 0} detail="官网暂时限制读取频率" tone="warning" />
+            <Metric
+              label="读取/解析失败"
+              value={(quality.blocked_count || 0) + (quality.fetch_failed_count || 0) + (quality.parse_failed_count || 0)}
+              detail="不会被当作已完成商品"
+              tone="warning"
+            />
+          </section>
+          <section className="baseline-catalog-coverage" aria-label="目录覆盖">
+            <div>
+              <div className="panel-kicker">CATALOG COVERAGE</div>
+              <h2>目录覆盖</h2>
+              <p>
+                {typeof catalogReferenceCount === "number"
+                  ? `已验证 ${quality.stored_product_count || 0} / 目录参考 ${catalogReferenceCount} 个商品`
+                  : `已验证 ${quality.stored_product_count || 0} 个商品；未取得公开目录总数，不能将当前数量视为全站商品总数。`}
+              </p>
+            </div>
+            <div className={`coverage-state ${coverageState || "pending"}`}>
+              {coverageState === "verified" ? "已核验" : coverageState === "incomplete" ? "尚不完整" : coverageState === "best_effort" ? "尽力发现" : "正在计算"}
+            </div>
+            {discoverySources.length ? (
+              <div className="coverage-sources" aria-label="发现来源">
+                {discoverySources.map(([source, count]) => <span key={source}>{sourceLabel(source)} · {count}</span>)}
+              </div>
+            ) : null}
+            {adapterIssues.length ? <small className="coverage-issues">{adapterIssues.map(adapterIssueLabel).join("；")}</small> : null}
+          </section>
+        </>
       ) : null}
 
       {baselineIncomplete ? (
@@ -167,6 +193,17 @@ export function BaselineScanPage() {
       </section>
     </main>
   );
+}
+
+function sourceLabel(source: string) {
+  return ({ shopify_api: "Shopify 公开目录", woocommerce_store_api: "WooCommerce 公开目录", product_sitemap: "商品 Sitemap", sitemap: "Sitemap", html_links: "页面链接", json_ld_item_list: "JSON-LD", browser_render: "动态渲染" } as Record<string, string>)[source] || source;
+}
+
+function adapterIssueLabel(attempt: { adapter: string; status: string; http_status?: number; reason?: string }) {
+  const adapter = sourceLabel(attempt.adapter);
+  if (attempt.status === "limited") return `${adapter}：读取频率受限${attempt.http_status ? ` (${attempt.http_status})` : ""}`;
+  if (attempt.status === "blocked") return `${adapter}：访问被拒绝${attempt.http_status ? ` (${attempt.http_status})` : ""}`;
+  return `${adapter}：${attempt.reason || "读取失败"}${attempt.http_status ? ` (${attempt.http_status})` : ""}`;
 }
 
 function Metric({ label, value, detail, tone = "default" }: { label: string; value: number | string; detail: string; tone?: "default" | "warning" | "success" }) {

@@ -5,13 +5,113 @@ import unittest
 from uuid import uuid4
 from unittest.mock import AsyncMock, patch
 
-from app.crawler import ExtractedProduct, ProductCandidate, ProductFetchError, discover_product_candidates, fetch_result_from_response, raise_for_fetch_failure, shopify_product_candidates
+from app.crawler import CatalogDiscoveryResult, ExtractedProduct, ProductCandidate, ProductFetchError, discover_product_candidates, fetch_result_from_response, jsonld_item_list_candidates, matches_catalog_candidate_rules, merge_catalog_candidates, product_from_woocommerce_payload, raise_for_fetch_failure, shopify_product_candidates, woocommerce_product_candidates_from_payload
 from app.db import execute_sql, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict
 from app.monitor import create_scan_job, record_scan_candidate, scan_site
 from app.rate_limit import domain_cooldown_remaining, record_domain_rate_limit, record_domain_success, reset_domain_rate_limits
 
 
 class CatalogDiscoveryTests(unittest.TestCase):
+    def test_merges_catalog_candidates_and_preserves_all_discovery_sources(self) -> None:
+        candidates = merge_catalog_candidates(
+            [
+                ProductCandidate(
+                    "https://store.example.com/product/air-pump/",
+                    "Air pump",
+                    {"kind": "woocommerce_product"},
+                    ("woocommerce_store_api",),
+                ),
+                ProductCandidate(
+                    "https://store.example.com/product/air-pump?utm_source=sitemap",
+                    "",
+                    None,
+                    ("product_sitemap", "json_ld_item_list"),
+                ),
+            ],
+            limit=10,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].payload, {"kind": "woocommerce_product"})
+        self.assertEqual(
+            candidates[0].discovery_sources,
+            ("woocommerce_store_api", "product_sitemap", "json_ld_item_list"),
+        )
+
+    def test_woocommerce_payload_creates_product_candidates_with_public_catalog_evidence(self) -> None:
+        candidates = woocommerce_product_candidates_from_payload(
+            [
+                {
+                    "id": 34,
+                    "name": "WordPress Pennant",
+                    "permalink": "https://store.example.com/shop/wordpress-pennant/",
+                }
+            ],
+            "https://store.example.com/",
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].url, "https://store.example.com/shop/wordpress-pennant/")
+        self.assertEqual(candidates[0].payload["kind"], "woocommerce_product")
+        self.assertEqual(candidates[0].discovery_sources, ("woocommerce_store_api",))
+
+    def test_jsonld_item_list_creates_product_candidate_when_url_has_no_product_path(self) -> None:
+        candidates = jsonld_item_list_candidates(
+            """
+            <script type="application/ld+json">
+              {"@context":"https://schema.org","@type":"ItemList","itemListElement":[
+                {"@type":"ListItem","position":1,"item":{"@type":"Product","name":"Quiet Pump","url":"/shop/quiet-pump"}}
+              ]}
+            </script>
+            """,
+            "https://store.example.com/collections/new",
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].url, "https://store.example.com/shop/quiet-pump")
+        self.assertEqual(candidates[0].payload["kind"], "jsonld_product")
+        self.assertEqual(candidates[0].discovery_sources, ("json_ld_item_list",))
+
+    def test_confirmed_platform_product_bypasses_generic_url_relevance_rule_but_honors_exclusions(self) -> None:
+        candidate = ProductCandidate(
+            "https://store.example.com/shop/quiet-pump",
+            "Quiet Pump",
+            {"kind": "woocommerce_product"},
+            ("woocommerce_store_api",),
+        )
+
+        self.assertTrue(matches_catalog_candidate_rules(candidate, [], [], require_relevance=True))
+        self.assertFalse(matches_catalog_candidate_rules(candidate, [], ["quiet"], require_relevance=True))
+
+    def test_woocommerce_payload_extracts_price_availability_image_and_sku_without_a_second_page_request(self) -> None:
+        product = product_from_woocommerce_payload(
+            ProductCandidate(
+                "https://store.example.com/shop/quiet-pump/",
+                "Quiet Pump",
+                {
+                    "kind": "woocommerce_product",
+                    "product": {
+                        "id": 34,
+                        "name": "Quiet Pump",
+                        "sku": "PUMP-34",
+                        "description": "<p>A quiet and compact air pump.</p>",
+                        "images": [{"src": "https://cdn.example.com/pump.jpg"}],
+                        "is_in_stock": True,
+                        "prices": {"price": "2599", "regular_price": "2999", "currency_code": "USD", "currency_minor_unit": 2},
+                    },
+                },
+                ("woocommerce_store_api",),
+            )
+        )
+
+        self.assertIsNotNone(product)
+        assert product is not None
+        self.assertEqual(product.price, "$25.99")
+        self.assertEqual(product.compare_at_price, 29.99)
+        self.assertEqual(product.availability, "in_stock")
+        self.assertEqual(product.image_url, "https://cdn.example.com/pump.jpg")
+        self.assertEqual(product.identifiers[0].value, "34")
+
     def test_rate_limit_cooldown_honors_retry_after_then_uses_bounded_backoff(self) -> None:
         reset_domain_rate_limits()
         with patch("app.rate_limit.time.monotonic", return_value=100.0):
@@ -133,6 +233,50 @@ class CatalogCandidatePersistenceTests(unittest.TestCase):
 
 
 class CatalogBaselineQualityTests(unittest.TestCase):
+    def test_scan_quality_exposes_catalog_reference_sources_and_incomplete_coverage(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        email = f"coverage-{marker}@monitor.internal"
+        site_url = f"https://coverage-{marker}.example.com"
+        with get_db() as db:
+            user_id = insert_row(db, "users", {"email": email, "password_hash": "not-used"})
+            site_id = insert_row(
+                db,
+                "sites",
+                {"user_id": user_id, "name": "Coverage store", "url": site_url, "scan_interval_minutes": 60, "notification_events": json_dumps(["product_new"])},
+            )
+            insert_row(db, "monitor_sources", {"site_id": site_id, "source_type": "homepage", "url": site_url, "scan_interval_minutes": 60})
+        job_id = create_scan_job(site_id, None, "site_scan", "baseline")
+        candidates = [ProductCandidate(f"{site_url}/shop/quiet-pump", "Quiet Pump", {"kind": "woocommerce_product"}, ("woocommerce_store_api",))]
+        stored_product = ExtractedProduct(
+            url=candidates[0].url, title="Quiet Pump", description="Quiet pump", image_url=None,
+            price="$19", price_amount=19.0, currency="USD", compare_at_price=None,
+            availability="in_stock", variant_count=1, variants=[], features=["Quiet"],
+            extraction_source="test", confidence_score=0.95, field_confidence={"price": 1.0},
+            confidence_reasons=[], content_hash=f"coverage-{marker}", raw_text="Quiet pump",
+        )
+        discovery = CatalogDiscoveryResult(
+            candidates=candidates,
+            reference_count=2,
+            discovery_source_counts={"woocommerce_store_api": 1},
+            adapter_attempts=[{"adapter": "woocommerce_store_api", "status": "available", "http_status": 200}],
+        )
+        try:
+            with (
+                patch("app.monitor.discover_catalog", new=AsyncMock(return_value=discovery)),
+                patch("app.monitor.capture_source_snapshot", new=AsyncMock(return_value=None)),
+                patch("app.monitor.extract_candidate_product", new=AsyncMock(return_value=stored_product)),
+            ):
+                result = asyncio.run(scan_site(site_id, trigger_type="baseline", job_id=job_id))
+
+            quality = result["progress"]["quality"]
+            self.assertEqual(quality["catalog_reference_count"], 2)
+            self.assertEqual(quality["discovery_source_counts"], {"woocommerce_store_api": 1})
+            self.assertEqual(quality["coverage_state"], "best_effort")
+        finally:
+            with get_db() as db:
+                execute_sql(db, "DELETE FROM users WHERE email = ?", (email,))
+
     def test_rate_limited_candidates_leave_baseline_incomplete(self) -> None:
         init_db()
         marker = uuid4().hex
@@ -163,6 +307,12 @@ class CatalogBaselineQualityTests(unittest.TestCase):
             )
         job_id = create_scan_job(site_id, None, "site_scan", "baseline")
         candidates = [ProductCandidate(f"{site_url}/products/{name}") for name in ("stored", "limited-one", "limited-two")]
+        discovery = CatalogDiscoveryResult(
+            candidates=candidates,
+            reference_count=None,
+            discovery_source_counts={"product_sitemap": len(candidates)},
+            adapter_attempts=[{"adapter": "shopify_api", "status": "limited", "http_status": 429}],
+        )
         stored_product = ExtractedProduct(
             url=candidates[0].url,
             title="Stored product",
@@ -185,7 +335,7 @@ class CatalogBaselineQualityTests(unittest.TestCase):
         )
         try:
             with (
-                patch("app.monitor.discover_candidates", new=AsyncMock(return_value=candidates)),
+                patch("app.monitor.discover_catalog", new=AsyncMock(return_value=discovery)),
                 patch("app.monitor.capture_source_snapshot", new=AsyncMock(return_value=None)),
                 patch(
                     "app.monitor.extract_candidate_product",

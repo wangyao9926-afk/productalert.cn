@@ -58,6 +58,15 @@ class ProductCandidate:
     url: str
     title_hint: str | None = None
     payload: dict[str, Any] | None = None
+    discovery_sources: tuple[str, ...] = ()
+
+
+@dataclass
+class CatalogDiscoveryResult:
+    candidates: list[ProductCandidate]
+    reference_count: int | None
+    discovery_source_counts: dict[str, int]
+    adapter_attempts: list[dict[str, Any]]
 
 
 @dataclass
@@ -306,29 +315,38 @@ def canonical_candidate_key(candidate: ProductCandidate) -> str:
     item_type, _ = classify_product_url(candidate.url)
     if item_type == "product_detail":
         segments = [segment for segment in parsed.path.strip("/").split("/") if segment]
-        if "products" in segments:
-            index = segments.index("products")
+        product_segment = next((segment for segment in ("products", "product") if segment in segments), None)
+        if product_segment:
+            index = segments.index(product_segment)
             if index + 1 < len(segments):
-                return f"{parsed.netloc.lower().removeprefix('www.')}/products/{segments[index + 1].lower()}"
+                return f"{parsed.netloc.lower().removeprefix('www.')}/{product_segment}/{segments[index + 1].lower()}"
     return normalize_url(candidate.url)
 
 
-def unique_urls(candidates: Iterable[ProductCandidate], limit: int) -> list[ProductCandidate]:
+def merge_catalog_candidates(candidates: Iterable[ProductCandidate], limit: int) -> list[ProductCandidate]:
     seen: dict[str, int] = {}
     unique: list[ProductCandidate] = []
     for candidate in candidates:
         clean = candidate.url.split("#", 1)[0].rstrip("/")
-        key = canonical_candidate_key(ProductCandidate(clean, candidate.title_hint, candidate.payload))
+        normalized_candidate = ProductCandidate(clean, candidate.title_hint, candidate.payload, candidate.discovery_sources)
+        key = canonical_candidate_key(normalized_candidate)
         if key in seen:
             index = seen[key]
-            if candidate.payload and not unique[index].payload:
-                unique[index] = ProductCandidate(clean, candidate.title_hint, candidate.payload)
+            existing = unique[index]
+            payload = existing.payload or candidate.payload
+            title_hint = existing.title_hint or candidate.title_hint
+            sources = tuple(dict.fromkeys((*existing.discovery_sources, *candidate.discovery_sources)))
+            unique[index] = ProductCandidate(existing.url, title_hint, payload, sources)
             continue
         seen[key] = len(unique)
-        unique.append(ProductCandidate(clean, candidate.title_hint, candidate.payload))
+        unique.append(normalized_candidate)
         if len(unique) >= limit:
             break
     return unique
+
+
+def unique_urls(candidates: Iterable[ProductCandidate], limit: int) -> list[ProductCandidate]:
+    return merge_catalog_candidates(candidates, limit)
 
 
 def xml_candidates(xml_text: str, base_url: str) -> list[ProductCandidate]:
@@ -352,6 +370,69 @@ def xml_candidates(xml_text: str, base_url: str) -> list[ProductCandidate]:
         if href:
             candidates.append(ProductCandidate(urljoin(base_url, href)))
 
+    return candidates
+
+
+def woocommerce_product_candidates_from_payload(payload: Any, source_url: str) -> list[ProductCandidate]:
+    if not isinstance(payload, list):
+        return []
+    candidates: list[ProductCandidate] = []
+    for product in payload:
+        if not isinstance(product, dict):
+            continue
+        permalink = product.get("permalink")
+        if not isinstance(permalink, str) or not permalink.strip():
+            continue
+        url = urljoin(source_url, permalink)
+        if not same_domain(source_url, url):
+            continue
+        candidates.append(
+            ProductCandidate(
+                url,
+                clean_text(str(product.get("name") or "")) or None,
+                {"kind": "woocommerce_product", "product": product},
+                ("woocommerce_store_api",),
+            )
+        )
+    return candidates
+
+
+def jsonld_item_list_candidates(html: str, base_url: str) -> list[ProductCandidate]:
+    soup = BeautifulSoup(html, "lxml")
+    candidates: list[ProductCandidate] = []
+    for script in soup.find_all("script", type=lambda value: value and "ld+json" in value):
+        try:
+            data = json.loads(script.string or script.get_text() or "")
+        except json.JSONDecodeError:
+            continue
+        for item_list in flatten_jsonld(data):
+            if not jsonld_type_matches(item_list, "itemlist"):
+                continue
+            elements = item_list.get("itemListElement")
+            if not isinstance(elements, list):
+                continue
+            for element in elements:
+                value = element.get("item", element) if isinstance(element, dict) else element
+                if isinstance(value, str):
+                    url, title = value, None
+                elif isinstance(value, dict):
+                    url = value.get("url") or value.get("@id")
+                    title = value.get("name")
+                else:
+                    continue
+                if not isinstance(url, str) or not url.strip():
+                    continue
+                candidate_url = urljoin(base_url, url)
+                if not same_domain(base_url, candidate_url):
+                    continue
+                candidates.append(
+                    ProductCandidate(
+                        candidate_url,
+                        clean_text(str(title or "")) or None,
+                        {"kind": "jsonld_product"} if isinstance(value, dict) and jsonld_type_matches(value, "product") else None,
+                        ("json_ld_item_list",),
+                    )
+                )
     return candidates
 
 
@@ -443,6 +524,221 @@ async def rendered_candidates(source_url: str, selector: str | None = None) -> l
     return html_candidates(rendered.html, rendered.url or source_url, selector)
 
 
+def with_discovery_source(candidates: Iterable[ProductCandidate], source: str) -> list[ProductCandidate]:
+    return [
+        ProductCandidate(
+            candidate.url,
+            candidate.title_hint,
+            candidate.payload,
+            tuple(dict.fromkeys((*candidate.discovery_sources, source))),
+        )
+        for candidate in candidates
+    ]
+
+
+def candidate_is_confirmed_product(candidate: ProductCandidate) -> bool:
+    kind = (candidate.payload or {}).get("kind")
+    return kind in {"shopify_product", "woocommerce_product", "jsonld_product"} or classify_product_url(candidate.url)[0] == "product_detail"
+
+
+def matches_catalog_candidate_rules(
+    candidate: ProductCandidate,
+    include_keywords: Sequence[str],
+    exclude_keywords: Sequence[str],
+    require_relevance: bool,
+) -> bool:
+    haystack = f"{candidate.url} {candidate.title_hint or ''}".lower()
+    if exclude_keywords and any(keyword.lower() in haystack for keyword in exclude_keywords):
+        return False
+    if include_keywords:
+        return any(keyword.lower() in haystack for keyword in include_keywords)
+    return candidate_is_confirmed_product(candidate) or not require_relevance or looks_relevant(candidate.url, candidate.title_hint or "")
+
+
+def discovery_source_counts(candidates: Iterable[ProductCandidate]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for candidate in candidates:
+        for source in candidate.discovery_sources:
+            counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+async def shopify_catalog_discovery(
+    client: httpx.AsyncClient,
+    source_url: str,
+    max_pages: int = 20,
+) -> tuple[list[ProductCandidate], int | None, dict[str, Any]]:
+    parsed = urlparse(source_url)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+    try:
+        safe_root = validate_public_http_url(root)
+    except UnsafeUrlError:
+        return [], None, {"adapter": "shopify_api", "status": "failed", "reason": "unsafe_url"}
+    endpoint = f"{safe_root.rstrip('/')}/products.json"
+    candidates: list[ProductCandidate] = []
+    for page in range(1, max_pages + 1):
+        try:
+            await wait_for_domain_slot(endpoint)
+            res = await client.get(endpoint, params={"limit": 250, "page": page}, follow_redirects=False)
+        except httpx.HTTPError:
+            return candidates, None, {"adapter": "shopify_api", "status": "failed", "reason": "network_error"}
+        if res.status_code == 429:
+            retry_after = res.headers.get("Retry-After", "").strip()
+            record_domain_rate_limit(endpoint, int(retry_after) if retry_after.isdigit() else None)
+            return candidates, None, {"adapter": "shopify_api", "status": "limited", "http_status": 429}
+        if res.status_code == 403:
+            return candidates, None, {"adapter": "shopify_api", "status": "blocked", "http_status": 403}
+        if res.status_code in {404, 410}:
+            return candidates, None, {"adapter": "shopify_api", "status": "not_applicable", "http_status": res.status_code}
+        if res.status_code >= 400:
+            return candidates, None, {"adapter": "shopify_api", "status": "failed", "http_status": res.status_code}
+        try:
+            data = res.json()
+        except json.JSONDecodeError:
+            return candidates, None, {"adapter": "shopify_api", "status": "not_applicable", "reason": "invalid_json"}
+        products = data.get("products") if isinstance(data, dict) else None
+        if not isinstance(products, list):
+            return candidates, None, {"adapter": "shopify_api", "status": "not_applicable", "reason": "unexpected_payload"}
+        record_domain_success(endpoint)
+        for product in products:
+            if not isinstance(product, dict) or not product.get("handle"):
+                continue
+            candidates.append(
+                ProductCandidate(
+                    f"{root}/products/{product['handle']}",
+                    product.get("title"),
+                    {"kind": "shopify_product", "product": product},
+                    ("shopify_api",),
+                )
+            )
+        if len(products) < 250:
+            return candidates, len(candidates), {"adapter": "shopify_api", "status": "available", "http_status": res.status_code}
+    return candidates, None, {"adapter": "shopify_api", "status": "failed", "reason": "page_limit_reached"}
+
+
+async def woocommerce_catalog_discovery(
+    client: httpx.AsyncClient,
+    source_url: str,
+    max_pages: int = 20,
+) -> tuple[list[ProductCandidate], int | None, dict[str, Any]]:
+    parsed = urlparse(source_url)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+    try:
+        safe_root = validate_public_http_url(root)
+    except UnsafeUrlError:
+        return [], None, {"adapter": "woocommerce_store_api", "status": "failed", "reason": "unsafe_url"}
+    endpoint = f"{safe_root.rstrip('/')}/wp-json/wc/store/v1/products"
+    candidates: list[ProductCandidate] = []
+    reference_count: int | None = None
+    for page in range(1, max_pages + 1):
+        try:
+            await wait_for_domain_slot(endpoint)
+            res = await client.get(endpoint, params={"per_page": 100, "page": page}, follow_redirects=False)
+        except httpx.HTTPError:
+            return candidates, reference_count, {"adapter": "woocommerce_store_api", "status": "failed", "reason": "network_error"}
+        if res.status_code == 429:
+            retry_after = res.headers.get("Retry-After", "").strip()
+            record_domain_rate_limit(endpoint, int(retry_after) if retry_after.isdigit() else None)
+            return candidates, reference_count, {"adapter": "woocommerce_store_api", "status": "limited", "http_status": 429}
+        if res.status_code == 403:
+            return candidates, reference_count, {"adapter": "woocommerce_store_api", "status": "blocked", "http_status": 403}
+        if res.status_code in {404, 410}:
+            return candidates, None, {"adapter": "woocommerce_store_api", "status": "not_applicable", "http_status": res.status_code}
+        if res.status_code >= 400:
+            return candidates, reference_count, {"adapter": "woocommerce_store_api", "status": "failed", "http_status": res.status_code}
+        try:
+            products = res.json()
+        except json.JSONDecodeError:
+            return candidates, None, {"adapter": "woocommerce_store_api", "status": "not_applicable", "reason": "invalid_json"}
+        if not isinstance(products, list):
+            return candidates, None, {"adapter": "woocommerce_store_api", "status": "not_applicable", "reason": "unexpected_payload"}
+        record_domain_success(endpoint)
+        if page == 1 and res.headers.get("X-WP-Total", "").isdigit():
+            reference_count = int(res.headers["X-WP-Total"])
+        candidates.extend(woocommerce_product_candidates_from_payload(products, source_url))
+        total_pages = res.headers.get("X-WP-TotalPages", "")
+        if len(products) < 100 or (total_pages.isdigit() and page >= int(total_pages)):
+            return candidates, reference_count, {"adapter": "woocommerce_store_api", "status": "available", "http_status": res.status_code}
+    return candidates, reference_count, {"adapter": "woocommerce_store_api", "status": "failed", "reason": "page_limit_reached"}
+
+
+async def discover_catalog(
+    source_url: str,
+    limit: int = 1000,
+    include_keywords: Sequence[str] | None = None,
+    exclude_keywords: Sequence[str] | None = None,
+    use_sitemap: bool = True,
+    require_relevance: bool = True,
+    selector: str | None = None,
+) -> CatalogDiscoveryResult:
+    source_url = normalize_url(source_url)
+    parsed = urlparse(source_url)
+    sitemap_url = f"{parsed.scheme}://{parsed.netloc}/sitemap.xml"
+    include = include_keywords or []
+    exclude = exclude_keywords or []
+    candidates: list[ProductCandidate] = []
+    attempts: list[dict[str, Any]] = []
+    reference_counts: list[int] = []
+    headers = {"user-agent": "Mozilla/5.0 ProductIntelligenceMonitor/1.0 (+local monitoring tool)"}
+    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+        shopify_candidates, shopify_reference, shopify_attempt = await shopify_catalog_discovery(client, source_url)
+        candidates.extend(shopify_candidates)
+        attempts.append(shopify_attempt)
+        if shopify_reference is not None:
+            reference_counts.append(shopify_reference)
+
+        woocommerce_candidates, woocommerce_reference, woocommerce_attempt = await woocommerce_catalog_discovery(client, source_url)
+        candidates.extend(woocommerce_candidates)
+        attempts.append(woocommerce_attempt)
+        if woocommerce_reference is not None:
+            reference_counts.append(woocommerce_reference)
+
+        if use_sitemap:
+            sitemap = await fetch_text(client, sitemap_url)
+            if sitemap:
+                sitemap_candidates = xml_candidates(sitemap, source_url)
+                candidates.extend(with_discovery_source(sitemap_candidates, "sitemap"))
+                child_sitemaps = [candidate for candidate in sitemap_candidates if same_domain(source_url, candidate.url) and looks_like_sitemap(candidate.url)]
+                for child in sorted(child_sitemaps, key=sitemap_priority)[:10]:
+                    child_text = await fetch_text(client, child.url)
+                    if child_text:
+                        source = "product_sitemap" if "product" in child.url.lower() else "sitemap"
+                        candidates.extend(with_discovery_source(xml_candidates(child_text, child.url), source))
+
+        page = await fetch_text(client, source_url)
+        if page:
+            lowered = page[:300].lower()
+            if "<?xml" in lowered or "<rss" in lowered or "<urlset" in lowered or "<feed" in lowered:
+                candidates.extend(with_discovery_source(xml_candidates(page, source_url), "sitemap"))
+            else:
+                candidates.extend(with_discovery_source(html_candidates(page, source_url, selector), "html_links"))
+                candidates.extend(jsonld_item_list_candidates(page, source_url))
+
+    filtered = [
+        candidate
+        for candidate in candidates
+        if same_domain(source_url, candidate.url)
+        and matches_catalog_candidate_rules(candidate, include, exclude, require_relevance)
+        and candidate_is_confirmed_product(candidate)
+    ]
+    if len(filtered) < 10:
+        rendered = await rendered_candidates(source_url, selector)
+        filtered.extend(
+            candidate
+            for candidate in with_discovery_source(rendered, "browser_render")
+            if same_domain(source_url, candidate.url)
+            and matches_catalog_candidate_rules(candidate, include, exclude, require_relevance)
+            and candidate_is_confirmed_product(candidate)
+        )
+    merged = merge_catalog_candidates(sorted(filtered, key=candidate_priority), limit)
+    return CatalogDiscoveryResult(
+        candidates=merged,
+        reference_count=max(reference_counts) if reference_counts else None,
+        discovery_source_counts=discovery_source_counts(merged),
+        adapter_attempts=attempts,
+    )
+
+
 async def discover_candidates(
     source_url: str,
     limit: int = 1000,
@@ -452,102 +748,19 @@ async def discover_candidates(
     require_relevance: bool = True,
     selector: str | None = None,
 ) -> list[ProductCandidate]:
-    source_url = normalize_url(source_url)
-    parsed = urlparse(source_url)
-    sitemap_url = f"{parsed.scheme}://{parsed.netloc}/sitemap.xml"
-    include = include_keywords or []
-    exclude = exclude_keywords or []
-    candidates: list[ProductCandidate] = []
-
-    headers = {
-        "user-agent": "Mozilla/5.0 ProductIntelligenceMonitor/1.0 (+local monitoring tool)"
-    }
-    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
-        if use_sitemap:
-            sitemap = await fetch_text(client, sitemap_url)
-            if sitemap:
-                sitemap_candidates = xml_candidates(sitemap, source_url)
-                candidates.extend(sitemap_candidates)
-                child_sitemaps = [
-                    candidate
-                    for candidate in sitemap_candidates
-                    if same_domain(source_url, candidate.url) and looks_like_sitemap(candidate.url)
-                ]
-                for child in sorted(child_sitemaps, key=sitemap_priority)[:10]:
-                    child_text = await fetch_text(client, child.url)
-                    if child_text:
-                        candidates.extend(xml_candidates(child_text, child.url))
-
-        page = await fetch_text(client, source_url)
-        if page:
-            lowered = page[:300].lower()
-            if "<?xml" in lowered or "<rss" in lowered or "<urlset" in lowered or "<feed" in lowered:
-                candidates.extend(xml_candidates(page, source_url))
-            else:
-                candidates.extend(html_candidates(page, source_url, selector))
-
-        candidates.extend(await shopify_product_candidates(client, source_url))
-
-    same_site_candidates = [
-        candidate for candidate in candidates if same_domain(source_url, candidate.url)
-    ]
-    filtered = [
-        candidate
-        for candidate in same_site_candidates
-        if matches_keyword_rules(candidate, include, exclude, require_relevance)
-    ]
-    if len(filtered) < 10:
-        rendered = await rendered_candidates(source_url, selector)
-        if rendered:
-            same_site_rendered = [
-                candidate for candidate in rendered if same_domain(source_url, candidate.url)
-            ]
-            filtered.extend(
-                candidate
-                for candidate in same_site_rendered
-                if matches_keyword_rules(candidate, include, exclude, require_relevance)
-            )
-    return unique_urls(sorted(filtered, key=candidate_priority), limit)
+    return (await discover_catalog(
+        source_url,
+        limit=limit,
+        include_keywords=include_keywords,
+        exclude_keywords=exclude_keywords,
+        use_sitemap=use_sitemap,
+        require_relevance=require_relevance,
+        selector=selector,
+    )).candidates
 
 
 async def shopify_product_candidates(client: httpx.AsyncClient, source_url: str, max_pages: int = 20) -> list[ProductCandidate]:
-    parsed = urlparse(source_url)
-    root = f"{parsed.scheme}://{parsed.netloc}"
-    try:
-        safe_root = validate_public_http_url(root)
-    except UnsafeUrlError:
-        return []
-    candidates: list[ProductCandidate] = []
-    for page in range(1, max_pages + 1):
-        try:
-            await wait_for_domain_slot(f"{safe_root.rstrip('/')}/products.json")
-            res = await client.get(f"{safe_root.rstrip('/')}/products.json", params={"limit": 250, "page": page}, follow_redirects=False)
-            if res.status_code == 429:
-                retry_after = res.headers.get("Retry-After", "").strip()
-                record_domain_rate_limit(
-                    f"{safe_root.rstrip('/')}/products.json",
-                    int(retry_after) if retry_after.isdigit() else None,
-                )
-            if res.status_code >= 400:
-                break
-            record_domain_success(f"{safe_root.rstrip('/')}/products.json")
-            data = res.json()
-        except (httpx.HTTPError, json.JSONDecodeError):
-            break
-        products = data.get("products") if isinstance(data, dict) else None
-        if not products:
-            break
-        for product in products:
-            handle = product.get("handle")
-            if not handle:
-                continue
-            candidates.append(ProductCandidate(
-                f"{root}/products/{handle}",
-                product.get("title"),
-                {"kind": "shopify_product", "product": product},
-            ))
-        if len(products) < 250:
-            break
+    candidates, _, _ = await shopify_catalog_discovery(client, source_url, max_pages=max_pages)
     return candidates
 
 
@@ -843,6 +1056,7 @@ def extraction_quality(
 ) -> tuple[float, dict[str, float], list[str]]:
     source_base = {
         "shopify_api": 0.9,
+        "woocommerce_store_api": 0.88,
         "json_ld": 0.82,
         "meta_tags": 0.72,
         "browser_render": 0.68,
@@ -1045,8 +1259,82 @@ def product_from_shopify_payload(candidate: ProductCandidate) -> ExtractedProduc
     )
 
 
+def woocommerce_price_amount(value: Any, minor_unit: Any) -> float | None:
+    parsed = parse_money(value)
+    if parsed is None:
+        return None
+    try:
+        divisor = 10 ** int(minor_unit)
+    except (TypeError, ValueError):
+        divisor = 100
+    return parsed / divisor
+
+
+def product_from_woocommerce_payload(candidate: ProductCandidate) -> ExtractedProduct | None:
+    payload = candidate.payload or {}
+    if payload.get("kind") != "woocommerce_product":
+        return None
+    product = payload.get("product")
+    if not isinstance(product, dict):
+        return None
+    title = clean_text(str(product.get("name") or candidate.title_hint or candidate.url))
+    description_html = str(product.get("description") or product.get("short_description") or product.get("summary") or "")
+    description_soup = BeautifulSoup(description_html, "lxml")
+    description = clean_text(description_soup.get_text(" ", strip=True))[:1000]
+    prices = product.get("prices") if isinstance(product.get("prices"), dict) else {}
+    currency = normalize_currency(prices.get("currency_code"))
+    price_amount = woocommerce_price_amount(prices.get("price"), prices.get("currency_minor_unit"))
+    compare_at_price = woocommerce_price_amount(prices.get("regular_price"), prices.get("currency_minor_unit"))
+    if compare_at_price is not None and price_amount is not None and compare_at_price <= price_amount:
+        compare_at_price = None
+    images = product.get("images") if isinstance(product.get("images"), list) else []
+    image_url = next((image.get("src") for image in images if isinstance(image, dict) and image.get("src")), None)
+    stock_status = str(product.get("stock_status") or "").lower()
+    availability = "in_stock" if product.get("is_in_stock") is True or stock_status in {"instock", "onbackorder"} else ("out_of_stock" if product.get("is_in_stock") is False or stock_status == "outofstock" else None)
+    features = [
+        clean_text(str(item.get("name") or ""))
+        for item in product.get("categories", [])
+        if isinstance(item, dict) and clean_text(str(item.get("name") or ""))
+    ][:4]
+    identifiers: list[ExtractedIdentifier] = []
+    for kind, raw_identifier in (("platform_product_id", product.get("id")), ("sku", product.get("sku"))):
+        normalized = normalized_identifier(kind, raw_identifier)
+        if normalized:
+            identifiers.append(ExtractedIdentifier(kind, normalized, str(raw_identifier), "woocommerce_store_api"))
+    hash_source = json.dumps(product, ensure_ascii=False, sort_keys=True, default=str)
+    confidence_score, field_confidence, confidence_reasons = extraction_quality(
+        title=title,
+        description=description,
+        image_url=image_url,
+        price=format_money(price_amount, currency) if price_amount is not None else None,
+        features=features,
+        extraction_source="woocommerce_store_api",
+    )
+    return ExtractedProduct(
+        url=candidate.url,
+        title=title[:300],
+        description=description,
+        image_url=image_url,
+        price=format_money(price_amount, currency) if price_amount is not None else None,
+        price_amount=price_amount,
+        currency=currency,
+        compare_at_price=compare_at_price,
+        availability=availability,
+        variant_count=None,
+        variants=[],
+        features=features,
+        extraction_source="woocommerce_store_api",
+        confidence_score=confidence_score,
+        field_confidence=field_confidence,
+        confidence_reasons=confidence_reasons,
+        content_hash=hashlib.sha256(hash_source.encode("utf-8")).hexdigest(),
+        raw_text=description,
+        identifiers=identifiers,
+    )
+
+
 async def extract_candidate_product(candidate: ProductCandidate) -> ExtractedProduct | None:
-    from_payload = product_from_shopify_payload(candidate)
+    from_payload = product_from_shopify_payload(candidate) or product_from_woocommerce_payload(candidate)
     if from_payload:
         return from_payload
     return await extract_product(candidate.url, candidate.title_hint)

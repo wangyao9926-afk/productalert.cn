@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from app.crawler import ExtractedProduct, ProductCandidate
+from app.crawler import CatalogDiscoveryResult, ExtractedProduct, ProductCandidate
 from app.db import execute_sql, fetchall, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict
 from app.main import app
 from app.monitor import create_scan_job, scan_site
@@ -164,9 +164,15 @@ class BaselineScanProgressRuntimeTests(unittest.TestCase):
                 )
                 for index, candidate in enumerate(candidates)
             ]
+            discovery = CatalogDiscoveryResult(
+                candidates=candidates,
+                reference_count=None,
+                discovery_source_counts={"product_sitemap": 2},
+                adapter_attempts=[],
+            )
 
             with (
-                patch("app.monitor.discover_candidates", new=AsyncMock(return_value=candidates)),
+                patch("app.monitor.discover_catalog", new=AsyncMock(return_value=discovery)),
                 patch("app.monitor.capture_source_snapshot", new=AsyncMock(return_value=None)),
                 patch("app.monitor.extract_candidate_product", new=AsyncMock(side_effect=extracted_products)),
             ):

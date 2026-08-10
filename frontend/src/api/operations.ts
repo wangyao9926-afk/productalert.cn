@@ -43,22 +43,43 @@ export type QualityBenchmark = {
   limitation: string;
 };
 
+export type RealSiteBenchmark = {
+  updated_at: string;
+  core_site_count: number;
+  control_site_count: number;
+  public_catalog_reference_count: number;
+  accuracy_claim_allowed: boolean;
+  next_action: string;
+  sites: Array<{
+    slug: string;
+    name: string;
+    url: string;
+    platform_hint: string;
+    reference_state: "public_catalog_count" | "sitemap_candidates" | "manual_required" | "negative_control";
+    reference_count: number | null;
+    evidence: string;
+    is_control: boolean;
+  }>;
+};
+
 export type OperationsContext = {
   health: SystemHealth;
   scanJobs: ScanJob[];
   scanLogs: ScanLog[];
   summary: OperationsSummary;
   qualityBenchmark?: QualityBenchmark;
+  realSiteBenchmark?: RealSiteBenchmark;
 };
 
 export async function loadOperationsContext(): Promise<OperationsContext> {
-  const [health, scanJobs, scanLogs, summary, qualityBenchmark] = await Promise.all([
+  const [health, scanJobs, scanLogs, summary, qualityBenchmark, realSiteBenchmark] = await Promise.all([
     getJson<SystemHealth>("/api/system/health"),
     getJson<ScanJob[]>("/api/scan-jobs"),
     getJson<ScanLog[]>("/api/scan-logs"),
     getJson<OperationsSummary>("/api/operations/summary"),
     getJson<QualityBenchmark>("/api/quality-benchmark"),
+    getJson<RealSiteBenchmark>("/api/real-site-benchmark"),
   ]);
 
-  return { health, scanJobs, scanLogs, summary, qualityBenchmark };
+  return { health, scanJobs, scanLogs, summary, qualityBenchmark, realSiteBenchmark };
 }

@@ -33,6 +33,7 @@ from app.evidence_store import evidence_path
 from app.extraction_quality_benchmark import controlled_benchmark_summary
 from app.monitor import create_site, create_source, scan_site, scan_source, scheduler_loop
 from app.notifier import notification_worker_loop, process_pending_notifications
+from app.real_site_benchmark import real_site_benchmark_summary
 from app.settings import database_settings, production_web_configuration_errors, queue_settings, runtime_settings, web_security_settings
 from app.task_queue import enqueue_site_scan, enqueue_source_scan, queue_backend_name, recover_queued_scan_tasks, scan_worker_loop
 from app.url_safety import UnsafeUrlError, validate_public_http_url
@@ -187,6 +188,11 @@ async def system_ping() -> dict:
 @app.get("/api/quality-benchmark")
 async def quality_benchmark(user: dict = CurrentUser) -> dict:
     return controlled_benchmark_summary()
+
+
+@app.get("/api/real-site-benchmark")
+async def real_site_benchmark(user: dict = CurrentUser) -> dict:
+    return real_site_benchmark_summary()
 
 
 def parse_observability_time(value: str | datetime | None) -> datetime | None:

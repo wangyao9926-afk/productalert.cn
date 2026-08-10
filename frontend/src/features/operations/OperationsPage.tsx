@@ -143,6 +143,7 @@ export function OperationsPage() {
       scanReliability: summary.scans.success_rate === null ? 100 : Math.round(summary.scans.success_rate * 100),
       failedLogs: scanLogs.filter((log) => log.status && log.status !== "success"),
       qualityBenchmark: context?.qualityBenchmark,
+      realSiteBenchmark: context?.realSiteBenchmark,
     };
   }, [context]);
 
@@ -185,6 +186,30 @@ export function OperationsPage() {
             <div className="benchmark-intro"><strong>{ops.qualityBenchmark.case_count} 个受控样本</strong><span>{ops.qualityBenchmark.coverage.join(" · ")}</span><p>{ops.qualityBenchmark.limitation}</p></div>
             <div className="benchmark-fields">{Object.entries(ops.qualityBenchmark.field_pass_rates).map(([field, rate]) => <div key={field}><span>{benchmarkFieldLabel(field)}</span><strong>{Math.round(rate * 100)}%</strong></div>)}</div>
             <small>下一阶段需要接入人工标注的真实站点真值集，才可对外宣称实际抓取准确率。</small>
+          </div>
+        </section>
+      ) : null}
+
+      {ops.realSiteBenchmark ? (
+        <section className="panel real-site-benchmark-panel" aria-label="真实站点基准">
+          <div className="panel-heading">
+            <div><div className="panel-kicker">REAL SITE REFERENCE</div><h2>真实站点基准</h2></div>
+            <span className="ops-status queued">人工确认中</span>
+          </div>
+          <div className="real-site-summary">
+            <strong>{ops.realSiteBenchmark.core_site_count} 个核心站点</strong>
+            <span>已取得公开目录参考数：{ops.realSiteBenchmark.public_catalog_reference_count} 个</span>
+            <small>{ops.realSiteBenchmark.next_action}</small>
+          </div>
+          <div className="real-site-list">
+            {ops.realSiteBenchmark.sites.map((site) => (
+              <article key={site.slug} className="real-site-row">
+                <div><strong>{site.name}</strong><span>{site.platform_hint} · {site.is_control ? "活动页对照样本" : referenceStateLabel(site.reference_state)}</span></div>
+                <div><b>{site.reference_count ?? "—"}</b><small>{site.reference_count === null ? "待人工确认" : "当前公开参考数"}</small></div>
+                <p>{site.evidence}</p>
+                <a href={site.url} target="_blank" rel="noreferrer">打开官网</a>
+              </article>
+            ))}
           </div>
         </section>
       ) : null}
@@ -287,6 +312,10 @@ export function OperationsPage() {
 
 function benchmarkFieldLabel(field: string) {
   return ({ url: "商品链接", title: "标题", price_amount: "价格", currency: "币种", availability: "库存", variant_count: "变体数" } as Record<string, string>)[field] || field;
+}
+
+function referenceStateLabel(state: string) {
+  return ({ public_catalog_count: "公开目录已核对", sitemap_candidates: "Sitemap 候选待确认", manual_required: "需人工确认", negative_control: "对照样本" } as Record<string, string>)[state] || state;
 }
 
 function OpsMetric({ label, value, detail, icon, tone }: { label: string; value: string | number; detail: string; icon: React.ReactNode; tone: string }) {

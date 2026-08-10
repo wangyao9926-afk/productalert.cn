@@ -143,7 +143,7 @@ for (const text of ["loadNotificationRules", "NotificationRule", "/api/notificat
 }
 
 const operationsApi = read("src/api/operations.ts");
-for (const text of ["loadOperationsContext", "/api/system/health", "/api/scan-jobs", "/api/scan-logs", "/api/quality-benchmark", "QualityBenchmark", "ScanJob"]) {
+for (const text of ["loadOperationsContext", "/api/system/health", "/api/scan-jobs", "/api/scan-logs", "/api/quality-benchmark", "/api/real-site-benchmark", "QualityBenchmark", "RealSiteBenchmark", "ScanJob"]) {
   assert(operationsApi.includes(text), `Operations API client is missing required text: ${text}`);
 }
 
@@ -234,7 +234,7 @@ for (const text of ["loadChangeEvents", "processingSummary", "pendingCount", "fo
 }
 
 const operations = read("src/features/operations/OperationsPage.tsx");
-for (const text of ["OperationsPage", "systemHealth", "scanJobs", "scanLogs", "queueStatus", "workerStatus", "databaseStatus", "redisStatus", "notificationWorkerStatus", "qualityBenchmark", "抓取准确性基准", "受控样本", "真实站点真值集"]) {
+for (const text of ["OperationsPage", "systemHealth", "scanJobs", "scanLogs", "queueStatus", "workerStatus", "databaseStatus", "redisStatus", "notificationWorkerStatus", "qualityBenchmark", "realSiteBenchmark", "抓取准确性基准", "真实站点基准", "人工确认", "真实站点真值集"]) {
   assert(operations.includes(text), `Operations Page is missing required ops feature: ${text}`);
 }
 

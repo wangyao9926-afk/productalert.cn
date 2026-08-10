@@ -142,6 +142,7 @@ export function OperationsPage() {
       redisStatus: redisStatus(systemHealth),
       scanReliability: summary.scans.success_rate === null ? 100 : Math.round(summary.scans.success_rate * 100),
       failedLogs: scanLogs.filter((log) => log.status && log.status !== "success"),
+      qualityBenchmark: context?.qualityBenchmark,
     };
   }, [context]);
 
@@ -173,6 +174,20 @@ export function OperationsPage() {
         <OpsMetric label="通知失败" value={ops.notificationStatus.failed} detail={`待发送 ${ops.notificationStatus.pending} / 发送中 ${ops.notificationStatus.sending}`} icon={<AlertTriangle size={18} />} tone="purple" />
         <OpsMetric label="数据库" value={ops.databaseStatus} detail="databaseStatus" icon={<Database size={18} />} tone="purple" />
       </section>
+
+      {ops.qualityBenchmark ? (
+        <section className="panel benchmark-panel" aria-label="抓取准确性基准">
+          <div className="panel-heading">
+            <div><div className="panel-kicker">EXTRACTION QUALITY</div><h2>抓取准确性基准</h2></div>
+            <span className={`ops-status ${ops.qualityBenchmark.passed ? "success" : "failed"}`}>{ops.qualityBenchmark.passed ? "受控样本通过" : "需要修复"}</span>
+          </div>
+          <div className="benchmark-body">
+            <div className="benchmark-intro"><strong>{ops.qualityBenchmark.case_count} 个受控样本</strong><span>{ops.qualityBenchmark.coverage.join(" · ")}</span><p>{ops.qualityBenchmark.limitation}</p></div>
+            <div className="benchmark-fields">{Object.entries(ops.qualityBenchmark.field_pass_rates).map(([field, rate]) => <div key={field}><span>{benchmarkFieldLabel(field)}</span><strong>{Math.round(rate * 100)}%</strong></div>)}</div>
+            <small>下一阶段需要接入人工标注的真实站点真值集，才可对外宣称实际抓取准确率。</small>
+          </div>
+        </section>
+      ) : null}
 
       <section className="operations-grid">
         <div className="panel ops-health-panel">
@@ -268,6 +283,10 @@ export function OperationsPage() {
       </section>
     </main>
   );
+}
+
+function benchmarkFieldLabel(field: string) {
+  return ({ url: "商品链接", title: "标题", price_amount: "价格", currency: "币种", availability: "库存", variant_count: "变体数" } as Record<string, string>)[field] || field;
 }
 
 function OpsMetric({ label, value, detail, icon, tone }: { label: string; value: string | number; detail: string; icon: React.ReactNode; tone: string }) {

@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-from app.crawler import ProductCandidate, product_from_html, product_from_shopify_payload
+from app.crawler import ProductCandidate, product_from_html, product_from_shopify_payload, product_from_woocommerce_payload
 
 
 QUALITY_FIELDS = ("url", "title", "price_amount", "currency", "availability", "variant_count")
@@ -46,7 +46,7 @@ class BenchmarkReport:
 def extract_case(case: BenchmarkCase):
     candidate = ProductCandidate(url=case.url, payload=case.payload)
     if case.payload is not None:
-        return product_from_shopify_payload(candidate)
+        return product_from_shopify_payload(candidate) or product_from_woocommerce_payload(candidate)
     if case.html is None:
         raise ValueError(f"Benchmark case '{case.name}' requires html or payload")
     return product_from_html(case.url, case.html)
@@ -131,13 +131,57 @@ def default_cases() -> list[BenchmarkCase]:
                 "availability": "out_of_stock",
             },
         ),
+        BenchmarkCase(
+            name="woocommerce-public-catalog-product",
+            url="https://benchmark.example.com/shop/quiet-pump",
+            payload={
+                "kind": "woocommerce_product",
+                "product": {
+                    "id": 77,
+                    "name": "Quiet Pump",
+                    "sku": "QP-77",
+                    "description": "<p>Compact pump for outdoor equipment.</p>",
+                    "images": [{"src": "https://cdn.example.com/quiet-pump.jpg"}],
+                    "is_in_stock": True,
+                    "prices": {
+                        "price": "2599",
+                        "regular_price": "2999",
+                        "currency_code": "USD",
+                        "currency_minor_unit": 2,
+                    },
+                },
+            },
+            expected={
+                "url": "https://benchmark.example.com/shop/quiet-pump",
+                "title": "Quiet Pump",
+                "price_amount": 25.99,
+                "currency": "USD",
+                "availability": "in_stock",
+            },
+        ),
     ]
 
 
-def main() -> None:
+def controlled_benchmark_summary() -> dict[str, Any]:
     report = run_benchmark(default_cases())
-    print(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True))
-    raise SystemExit(0 if report.passed else 1)
+    return {
+        "scope": "controlled_fixture",
+        "case_count": len(report.case_results),
+        "passed": report.passed,
+        "field_pass_rates": report.field_pass_rates,
+        "case_results": [
+            {"name": result.name, "passed": result.passed, "mismatches": result.mismatches}
+            for result in report.case_results
+        ],
+        "coverage": ["shopify_api", "json_ld", "woocommerce_store_api"],
+        "limitation": "这是受控样本回归测试，不代表线上真实站点的抓取准确率；真实准确率需要人工标注的站点真值集。",
+    }
+
+
+def main() -> None:
+    summary = controlled_benchmark_summary()
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(0 if summary["passed"] else 1)
 
 
 if __name__ == "__main__":

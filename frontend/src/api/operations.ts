@@ -33,20 +33,32 @@ export type OperationsSummary = {
   failure_categories: Array<{ category: string; count: number }>;
 };
 
+export type QualityBenchmark = {
+  scope: "controlled_fixture";
+  case_count: number;
+  passed: boolean;
+  field_pass_rates: Record<string, number>;
+  case_results: Array<{ name: string; passed: boolean; mismatches: Record<string, unknown> }>;
+  coverage: string[];
+  limitation: string;
+};
+
 export type OperationsContext = {
   health: SystemHealth;
   scanJobs: ScanJob[];
   scanLogs: ScanLog[];
   summary: OperationsSummary;
+  qualityBenchmark?: QualityBenchmark;
 };
 
 export async function loadOperationsContext(): Promise<OperationsContext> {
-  const [health, scanJobs, scanLogs, summary] = await Promise.all([
+  const [health, scanJobs, scanLogs, summary, qualityBenchmark] = await Promise.all([
     getJson<SystemHealth>("/api/system/health"),
     getJson<ScanJob[]>("/api/scan-jobs"),
     getJson<ScanLog[]>("/api/scan-logs"),
     getJson<OperationsSummary>("/api/operations/summary"),
+    getJson<QualityBenchmark>("/api/quality-benchmark"),
   ]);
 
-  return { health, scanJobs, scanLogs, summary };
+  return { health, scanJobs, scanLogs, summary, qualityBenchmark };
 }

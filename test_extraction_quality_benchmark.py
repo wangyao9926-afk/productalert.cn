@@ -59,7 +59,7 @@ class ExtractionQualityBenchmarkTests(unittest.TestCase):
         report = run_benchmark(default_cases())
 
         self.assertTrue(report.passed)
-        self.assertEqual(len(report.case_results), 2)
+        self.assertEqual(len(report.case_results), 3)
         self.assertEqual(report.field_pass_rates["price_amount"], 1.0)
         self.assertEqual(report.field_pass_rates["availability"], 1.0)
         self.assertEqual(report.field_pass_rates["variant_count"], 1.0)

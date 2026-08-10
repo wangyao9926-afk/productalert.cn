@@ -30,6 +30,7 @@ from app.auth import (
 )
 from app.db import ROOT, assignment_list, execute_sql, fetchall, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict, select_by_id, update_by_id
 from app.evidence_store import evidence_path
+from app.extraction_quality_benchmark import controlled_benchmark_summary
 from app.monitor import create_site, create_source, scan_site, scan_source, scheduler_loop
 from app.notifier import notification_worker_loop, process_pending_notifications
 from app.settings import database_settings, production_web_configuration_errors, queue_settings, runtime_settings, web_security_settings
@@ -181,6 +182,11 @@ async def system_health(user: dict = CurrentUser) -> dict:
 @app.get("/api/system/ping")
 async def system_ping() -> dict:
     return {"ok": True}
+
+
+@app.get("/api/quality-benchmark")
+async def quality_benchmark(user: dict = CurrentUser) -> dict:
+    return controlled_benchmark_summary()
 
 
 def parse_observability_time(value: str | datetime | None) -> datetime | None:

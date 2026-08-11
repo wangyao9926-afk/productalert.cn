@@ -215,9 +215,13 @@ for (const text of ["登录 ProductAlert", "注册新账号", "邮箱", "密码"
 }
 
 const notifications = read("src/features/notifications/NotificationsPage.tsx");
-for (const text of ["通知中心", "通知规则", "新品上新", "价格变化", "库存变化", "信息变化", "邮件", "Webhook", "企业微信 / 飞书", "重试通知", "导出 CSV", "真实 API", "演示数据"]) {
+for (const text of ["通知中心", "通知规则", "新品上新", "价格变化", "库存变化", "信息变化", "Webhook", "企业微信", "飞书", "重试通知", "导出 CSV", "真实 API", "演示数据"]) {
   assert(notifications.includes(text), `Notifications Page is missing required text: ${text}`);
 }
+for (const text of ["showRuleComposer", "notification-rule-dialog", "新建通知规则", "关闭新建通知规则"]) {
+  assert(notifications.includes(text), `Notifications Page must keep rule creation out of the dashboard flow: ${text}`);
+}
+assert(!notifications.includes('to="/monitors/new"'), "Notification rule creation must not navigate to monitor setup");
 for (const text of ["通知策略", "真实规则 API", "事件类型", "严重程度", "处理状态", "只推送新品/价格变化", "只推送高严重程度", "只推送需跟进事件", "loadNotificationRules"]) {
   assert(notifications.includes(text), `Notifications Page is missing notification strategy text: ${text}`);
 }

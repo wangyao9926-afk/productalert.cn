@@ -5,23 +5,15 @@ import {
   CheckCircle2,
   Clock3,
   Download,
-  Mail,
-  MessageSquare,
   RefreshCw,
   RotateCcw,
   Send,
   Webhook,
+  X,
 } from "lucide-react";
-import { Link } from "react-router-dom";
 import { apiUrl, ApiError } from "../../api/client";
 import { createNotificationRule, loadNotificationRules, loadNotifications, retryNotification, type NotificationRecord, type NotificationRule } from "../../api/notifications";
 import { loadOverview, type OverviewData } from "../../api/overview";
-
-const channelCards = [
-  { label: "邮件", icon: Mail, detail: "适合日报、低频人工审阅、团队归档" },
-  { label: "Webhook", icon: Webhook, detail: "适合对接内部系统、自动化任务和数据仓库" },
-  { label: "企业微信 / 飞书", icon: MessageSquare, detail: "适合运营即时提醒、值班群和项目协同" },
-];
 
 const eventTypeLabels: Record<string, string> = {
   product_new: "新品上新",
@@ -153,6 +145,7 @@ export function NotificationsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [creatingRule, setCreatingRule] = useState(false);
+  const [showRuleComposer, setShowRuleComposer] = useState(false);
   const [newRuleName, setNewRuleName] = useState("新品与价格提醒");
   const [newRuleChannel, setNewRuleChannel] = useState<"webhook" | "wecom" | "feishu">("wecom");
   const [newRuleTarget, setNewRuleTarget] = useState("");
@@ -229,6 +222,7 @@ export function NotificationsPage() {
       });
       setRules((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       setNewRuleTarget("");
+      setShowRuleComposer(false);
       setMessage({ type: "success", text: "推送规则已创建，后续匹配事件将进入通知队列。" });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof ApiError ? "规则创建失败，请检查机器人 Webhook 地址。" : "规则创建失败，请稍后重试。" });
@@ -247,7 +241,7 @@ export function NotificationsPage() {
         <div>
           <div className="eyebrow">NOTIFICATION CENTER</div>
           <h1>通知中心</h1>
-          <p>集中管理新品上新、价格变化、库存变化和信息变化的通知队列与通知策略，按事件类型、严重程度和处理状态控制推送。</p>
+          <p>这里负责把已确认的重要变化送到团队：设置推送规则、查看送达结果和处理失败重试；变化是否重要，请先在情报收件箱判断。</p>
           <div className={`api-status-pill ${live ? "success" : "warning"}`}>
             {live ? "真实 API" : "演示数据"} · {overview?.message || "通知 API 不可用，当前显示演示数据"}
           </div>
@@ -255,24 +249,49 @@ export function NotificationsPage() {
         <div className="page-actions">
           <button className="icon-button" type="button" onClick={refresh} aria-label="刷新通知中心"><RefreshCw size={17} /></button>
           <a className="button button-secondary" href={apiUrl("/api/export/notifications.csv")} target="_blank" rel="noreferrer"><Download size={16} /> 导出 CSV</a>
-          <Link className="primary-button" to="/monitors/new"><BellRing size={17} /> 新建通知规则</Link>
+          <button className="primary-button" type="button" onClick={() => setShowRuleComposer(true)}><BellRing size={17} /> 新建通知规则</button>
         </div>
       </header>
 
-      <form className="panel" onSubmit={handleCreateRule}>
-        <div className="panel-heading">
-          <div><div className="panel-kicker">DELIVERY</div><h2>新建推送规则</h2></div>
-          <span className="tag">Webhook / 企业微信 / 飞书</span>
+      {showRuleComposer ? (
+        <div className="notification-rule-dialog-backdrop" role="presentation">
+          <section className="notification-rule-dialog" role="dialog" aria-modal="true" aria-labelledby="notification-rule-dialog-title">
+            <div className="notification-rule-dialog-heading">
+              <div>
+                <div className="panel-kicker">DELIVERY RULE</div>
+                <h2 id="notification-rule-dialog-title">新建通知规则</h2>
+                <p>默认仅推送新品、价格和库存变化；普通信息变化留在情报收件箱，不发送打扰。</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowRuleComposer(false)} aria-label="关闭新建通知规则"><X size={17} /></button>
+            </div>
+            <form className="notification-rule-form" onSubmit={handleCreateRule}>
+              <label>
+                <span>规则名称</span>
+                <input value={newRuleName} onChange={(event) => setNewRuleName(event.target.value)} />
+              </label>
+              <label>
+                <span>推送通道</span>
+                <select value={newRuleChannel} onChange={(event) => setNewRuleChannel(event.target.value as "webhook" | "wecom" | "feishu")}>
+                  <option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="webhook">通用 Webhook</option>
+                </select>
+              </label>
+              <label className="notification-rule-form-wide">
+                <span>推送地址</span>
+                <input type="url" required placeholder="https://..." value={newRuleTarget} onChange={(event) => setNewRuleTarget(event.target.value)} />
+              </label>
+              <label>
+                <span>价格上限（可选）</span>
+                <input type="number" min="0" step="0.01" placeholder="例如 500" value={newRuleMaxPrice} onChange={(event) => setNewRuleMaxPrice(event.target.value)} />
+              </label>
+              <label className="notification-rule-check"><input type="checkbox" checked={newRuleRequireInStock} onChange={(event) => setNewRuleRequireInStock(event.target.checked)} />仅在有货时通知</label>
+              <div className="notification-rule-actions">
+                <button className="button button-secondary" type="button" onClick={() => setShowRuleComposer(false)}>取消</button>
+                <button className="primary-button" type="submit" disabled={creatingRule}>{creatingRule ? "创建中..." : "保存并启用"}</button>
+              </div>
+            </form>
+          </section>
         </div>
-        <div className="form-grid">
-          <label className="field-label">规则名称<input value={newRuleName} onChange={(event) => setNewRuleName(event.target.value)} /></label>
-          <label className="field-label">通道<select value={newRuleChannel} onChange={(event) => setNewRuleChannel(event.target.value as "webhook" | "wecom" | "feishu")}><option value="wecom">企业微信</option><option value="feishu">飞书</option><option value="webhook">通用 Webhook</option></select></label>
-          <label className="field-label">机器人 Webhook URL<input type="url" required placeholder="https://..." value={newRuleTarget} onChange={(event) => setNewRuleTarget(event.target.value)} /></label>
-          <label className="field-label">价格上限（可选）<input type="number" min="0" step="0.01" placeholder="例如 500" value={newRuleMaxPrice} onChange={(event) => setNewRuleMaxPrice(event.target.value)} /></label>
-          <label className="field-label checkbox-field"><input type="checkbox" checked={newRuleRequireInStock} onChange={(event) => setNewRuleRequireInStock(event.target.checked)} />仅在有货时通知</label>
-          <button className="primary-button" type="submit" disabled={creatingRule}>{creatingRule ? "创建中..." : "启用推送"}</button>
-        </div>
-      </form>
+      ) : null}
 
       <section className="notification-summary-grid" aria-label="通知概览">
         <NotifyMetric label="待发送" value={summary.pending} detail="等待通知 worker 发送" icon={<Clock3 size={18} />} tone="orange" />
@@ -281,8 +300,7 @@ export function NotificationsPage() {
         <NotifyMetric label="Webhook" value={summary.webhook} detail="自动化通知数量" icon={<Webhook size={18} />} tone="blue" />
       </section>
 
-      <section className="notification-layout">
-        <div className="panel notification-rules-panel">
+      <section className="panel notification-rules-panel">
           <div className="panel-heading">
             <div>
               <div className="panel-kicker">RULES</div>
@@ -306,27 +324,6 @@ export function NotificationsPage() {
               );
             })}
           </div>
-        </div>
-
-        <aside className="panel channel-panel">
-          <div className="panel-heading">
-            <div>
-              <div className="panel-kicker">CHANNELS</div>
-              <h2>通知渠道</h2>
-            </div>
-          </div>
-          <div className="channel-list-panel">
-            {channelCards.map(({ label, icon: Icon, detail }) => (
-              <div className="channel-row" key={label}>
-                <Icon size={17} />
-                <div>
-                  <strong>{label}</strong>
-                  <span>{detail}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </aside>
       </section>
 
       {message ? <div className={`operation-message ${message.type}`}>{message.text}</div> : null}

@@ -88,6 +88,7 @@ export function ProductsPage() {
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState("all");
   const [selectedSiteId, setSelectedSiteId] = useState<number | null>(() => siteIdFromSearch(location.search));
+  const [siteScopeChosen, setSiteScopeChosen] = useState(() => siteIdFromSearch(location.search) !== null);
 
   const refresh = () => {
     setLoading(true);
@@ -96,7 +97,30 @@ export function ProductsPage() {
 
   useEffect(refresh, []);
 
-  useEffect(() => setSelectedSiteId(siteIdFromSearch(location.search)), [location.search]);
+  useEffect(() => {
+    const siteId = siteIdFromSearch(location.search);
+    setSelectedSiteId(siteId);
+    setSiteScopeChosen(siteId !== null);
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!data || siteScopeChosen) return;
+    const firstSiteWithProducts = data.sites.find((site) => data.products.some((product) => product.site_id === site.id));
+    if (firstSiteWithProducts) {
+      setSelectedSiteId(firstSiteWithProducts.id);
+    }
+    setSiteScopeChosen(true);
+  }, [data, siteScopeChosen]);
+
+  const siteSummaries = useMemo(() => data?.sites.map((site) => ({
+    ...site,
+    productCount: data.products.filter((product) => product.site_id === site.id).length,
+  })).filter((site) => site.productCount > 0) || [], [data]);
+
+  const selectSiteScope = (siteId: number | null) => {
+    setSelectedSiteId(siteId);
+    setSiteScopeChosen(true);
+  };
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -142,6 +166,21 @@ export function ProductsPage() {
         <ProductMetric label="来源站点" value={new Set(rows.map((row) => row.product.site_id)).size} detail="覆盖官网数量" icon={<Tag size={18} />} tone="purple" />
       </section>
 
+      <section className="site-scope-grid" aria-label="按站点查看产品库">
+        <button className={`site-scope-card ${selectedSiteId === null ? "active" : ""}`} type="button" onClick={() => selectSiteScope(null)}>
+          <span>全部站点</span>
+          <strong>{data.products.length}</strong>
+          <small>{siteSummaries.length} 个官网</small>
+        </button>
+        {siteSummaries.map((site) => (
+          <button className={`site-scope-card ${selectedSiteId === site.id ? "active" : ""}`} type="button" key={site.id} onClick={() => selectSiteScope(site.id)}>
+            <span>{site.name || site.url}</span>
+            <strong>{site.productCount}</strong>
+            <small>{site.url}</small>
+          </button>
+        ))}
+      </section>
+
       <section className="panel product-toolbar" aria-label="产品搜索">
         <div className="monitor-search">
           <Search size={15} aria-hidden="true" />
@@ -155,7 +194,7 @@ export function ProductsPage() {
         </select>
         <label className="site-filter-select">
           <span>按站点查看</span>
-          <select value={selectedSiteId?.toString() || "all"} onChange={(event) => setSelectedSiteId(event.target.value === "all" ? null : Number(event.target.value))} aria-label="按站点查看">
+          <select value={selectedSiteId?.toString() || "all"} onChange={(event) => selectSiteScope(event.target.value === "all" ? null : Number(event.target.value))} aria-label="按站点查看">
             <option value="all">全部站点</option>
             {data.sites.map((site) => <option value={site.id} key={site.id}>{site.name || site.url}</option>)}
           </select>

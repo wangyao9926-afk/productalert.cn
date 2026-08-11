@@ -227,6 +227,9 @@ for (const text of ["URLSearchParams", "product-thumb", "onError", "slice(0, 2)"
 for (const text of ["selectedSiteId", "setSelectedSiteId", "全部站点", "按站点查看", "site-filter-select"]) {
   assert(products.includes(text), `Products Page must support source-site filtering: ${text}`);
 }
+for (const text of ["site-scope-grid", "site-scope-card", "siteScopeChosen", "siteSummaries"]) {
+  assert(products.includes(text), `Products Page must prioritize a source-site scope: ${text}`);
+}
 
 const productDetail = read("src/features/products/ProductDetailPage.tsx");
 for (const text of ["产品详情", "价格与库存", "关联变化事件", "打开官网", "返回产品库", "查看变化详情"]) {

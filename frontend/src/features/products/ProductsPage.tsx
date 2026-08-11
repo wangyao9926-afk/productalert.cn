@@ -88,7 +88,7 @@ export function ProductsPage() {
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState("all");
   const [selectedSiteId, setSelectedSiteId] = useState<number | null>(() => siteIdFromSearch(location.search));
-  const [siteScopeChosen, setSiteScopeChosen] = useState(() => siteIdFromSearch(location.search) !== null);
+  const [brandQuery, setBrandQuery] = useState("");
 
   const refresh = () => {
     setLoading(true);
@@ -100,40 +100,45 @@ export function ProductsPage() {
   useEffect(() => {
     const siteId = siteIdFromSearch(location.search);
     setSelectedSiteId(siteId);
-    setSiteScopeChosen(siteId !== null);
   }, [location.search]);
-
-  useEffect(() => {
-    if (!data || siteScopeChosen) return;
-    const firstSiteWithProducts = data.sites.find((site) => data.products.some((product) => product.site_id === site.id));
-    if (firstSiteWithProducts) {
-      setSelectedSiteId(firstSiteWithProducts.id);
-    }
-    setSiteScopeChosen(true);
-  }, [data, siteScopeChosen]);
 
   const siteSummaries = useMemo(() => data?.sites.map((site) => ({
     ...site,
     productCount: data.products.filter((product) => product.site_id === site.id).length,
   })).filter((site) => site.productCount > 0) || [], [data]);
 
-  const selectSiteScope = (siteId: number | null) => {
+  const activeSiteId = selectedSiteId && siteSummaries.some((site) => site.id === selectedSiteId)
+    ? selectedSiteId
+    : siteSummaries[0]?.id ?? null;
+  const activeSite = siteSummaries.find((site) => site.id === activeSiteId) || null;
+  const quickSites = activeSite
+    ? [activeSite, ...siteSummaries.filter((site) => site.id !== activeSite.id).slice(0, 2)]
+    : [];
+  const remainingSites = siteSummaries.filter((site) => !quickSites.some((quickSite) => quickSite.id === site.id));
+  const searchableSites = remainingSites.filter((site) => `${site.name || ""} ${site.url || ""}`.toLowerCase().includes(brandQuery.trim().toLowerCase()));
+
+  useEffect(() => {
+    if (activeSiteId && selectedSiteId !== activeSiteId) {
+      setSelectedSiteId(activeSiteId);
+    }
+  }, [activeSiteId, selectedSiteId]);
+
+  const selectSiteScope = (siteId: number) => {
     setSelectedSiteId(siteId);
-    setSiteScopeChosen(true);
   };
 
   const rows = useMemo(() => {
     if (!data) return [];
     const normalizedQuery = query.trim().toLowerCase();
     return data.products
-      .filter((product) => selectedSiteId === null || product.site_id === selectedSiteId)
+      .filter((product) => product.site_id === activeSiteId)
       .map((product) => ({ product, events: relatedEvents(product, data.events) }))
       .filter(({ product }) => {
         const queryMatch = !normalizedQuery || `${product.title || ""} ${product.site_name || ""} ${product.url || ""}`.toLowerCase().includes(normalizedQuery);
         const availabilityMatch = availability === "all" || availabilityText(product.availability) === availability;
         return queryMatch && availabilityMatch;
       });
-  }, [availability, data, query, selectedSiteId]);
+  }, [activeSiteId, availability, data, query]);
 
   const changedCount = rows.filter((row) => row.events.length > 0).length;
   const inStockCount = rows.filter((row) => availabilityText(row.product.availability) === "有货").length;
@@ -160,25 +165,39 @@ export function ProductsPage() {
       </header>
 
       <section className="product-summary-grid" aria-label="产品库概览">
-        <ProductMetric label="已验证商品" value={rows.length} detail={selectedSiteId ? "当前站点范围" : "当前筛选范围"} icon={<Boxes size={18} />} tone="blue" />
+        <ProductMetric label="已验证商品" value={rows.length} detail="当前品牌范围" icon={<Boxes size={18} />} tone="blue" />
         <ProductMetric label="有货产品" value={inStockCount} detail="库存可售状态" icon={<PackageCheck size={18} />} tone="green" />
         <ProductMetric label="关联变化" value={changedCount} detail="存在变化事件的产品" icon={<TrendingUp size={18} />} tone="orange" />
-        <ProductMetric label="来源站点" value={new Set(rows.map((row) => row.product.site_id)).size} detail="覆盖官网数量" icon={<Tag size={18} />} tone="purple" />
+        <ProductMetric label="当前品牌" value={activeSite?.name || "—"} detail={activeSite?.url || "等待产品基线完成"} icon={<Tag size={18} />} tone="purple" />
       </section>
 
-      <section className="site-scope-grid" aria-label="按站点查看产品库">
-        <button className={`site-scope-card ${selectedSiteId === null ? "active" : ""}`} type="button" onClick={() => selectSiteScope(null)}>
-          <span>全部站点</span>
-          <strong>{data.products.length}</strong>
-          <small>{siteSummaries.length} 个官网</small>
-        </button>
-        {siteSummaries.map((site) => (
-          <button className={`site-scope-card ${selectedSiteId === site.id ? "active" : ""}`} type="button" key={site.id} onClick={() => selectSiteScope(site.id)}>
-            <span>{site.name || site.url}</span>
-            <strong>{site.productCount}</strong>
-            <small>{site.url}</small>
-          </button>
-        ))}
+      <section className="brand-scope-bar" aria-label="品牌产品库切换">
+        <div className="brand-scope-heading">
+          <span>当前品牌</span>
+          <strong>{activeSite?.name || "等待可用产品库"}</strong>
+          {activeSite ? <small>{activeSite.productCount} 个商品</small> : null}
+        </div>
+        <div className="brand-quick-switcher">
+          {quickSites.map((site) => (
+            <button className={`brand-scope-button ${activeSiteId === site.id ? "active" : ""}`} type="button" key={site.id} onClick={() => selectSiteScope(site.id)}>
+              {site.name || site.url}
+            </button>
+          ))}
+          {remainingSites.length ? (
+            <details className="brand-switcher">
+              <summary>更多品牌（{remainingSites.length}）</summary>
+              <div className="brand-switcher-menu">
+                <input className="brand-search-input" value={brandQuery} onChange={(event) => setBrandQuery(event.target.value)} placeholder="搜索品牌或官网" aria-label="搜索品牌或官网" />
+                {searchableSites.length ? searchableSites.map((site) => (
+                  <button type="button" key={site.id} onClick={() => selectSiteScope(site.id)}>
+                    <span>{site.name || site.url}</span>
+                    <small>{site.productCount} 个商品</small>
+                  </button>
+                )) : <p>没有匹配的品牌</p>}
+              </div>
+            </details>
+          ) : null}
+        </div>
       </section>
 
       <section className="panel product-toolbar" aria-label="产品搜索">
@@ -192,13 +211,6 @@ export function ProductsPage() {
           <option value="售罄">售罄</option>
           <option value="未知库存">未知库存</option>
         </select>
-        <label className="site-filter-select">
-          <span>按站点查看</span>
-          <select value={selectedSiteId?.toString() || "all"} onChange={(event) => selectSiteScope(event.target.value === "all" ? null : Number(event.target.value))} aria-label="按站点查看">
-            <option value="all">全部站点</option>
-            {data.sites.map((site) => <option value={site.id} key={site.id}>{site.name || site.url}</option>)}
-          </select>
-        </label>
         <span className="monitor-count">{rows.length} 个商品</span>
       </section>
 

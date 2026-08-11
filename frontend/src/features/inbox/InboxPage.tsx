@@ -29,6 +29,8 @@ type Severity = "high" | "medium" | "low";
 
 type InboxItem = {
   id: number;
+  productId?: number | null;
+  productUrl?: string | null;
   title: string;
   site: string;
   summary: string;
@@ -37,10 +39,13 @@ type InboxItem = {
   severity: Severity;
   status: InboxStatus;
   createdAt: string;
+  createdAtRaw?: string | null;
   owner: string;
   note: string;
   followUp: boolean;
 };
+
+const actionableChangeTypes = new Set(["new_product", "variant_new", "price_changed", "availability_changed"]);
 
 const changeTypeLabels: Record<string, string> = {
   new_product: "新品上新",
@@ -114,6 +119,8 @@ function toInboxItems(data: OverviewData, localStatuses: Record<number, InboxSta
     const status = localStatuses[event.id] || normalizeInboxStatus(event);
     return {
       id: event.id,
+      productId: event.product_id,
+      productUrl: event.product_url,
       title: event.product_title || "未命名产品",
       site: event.site_name || "未知站点",
       summary: event.summary || "检测到页面信息变化",
@@ -122,11 +129,30 @@ function toInboxItems(data: OverviewData, localStatuses: Record<number, InboxSta
       severity: inferSeverity(event),
       status,
       createdAt: relativeTime(event.created_at),
+      createdAtRaw: event.created_at,
       owner: event.assignee || ownerByStatus[status],
       note: event.review_note || event.false_positive_reason || noteByStatus[status],
       followUp: status === "watched",
     };
   });
+}
+
+function isActionableEvent(item: InboxItem) {
+  if (item.status === "watched") return true;
+  return item.status === "unread" && actionableChangeTypes.has(item.type);
+}
+
+function dedupeActionableEvents(items: InboxItem[]) {
+  const seen = new Set<string>();
+  return [...items]
+    .sort((left, right) => new Date(right.createdAtRaw || 0).getTime() - new Date(left.createdAtRaw || 0).getTime())
+    .filter((item) => {
+      const productIdentity = item.productId || item.productUrl || item.title;
+      const key = `${item.site}:${productIdentity}:${item.type}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 function countBy(items: InboxItem[], predicate: (item: InboxItem) => boolean) {
@@ -141,6 +167,7 @@ export function InboxPage() {
   const [activeStatus, setActiveStatus] = useState("all");
   const [activeSite, setActiveSite] = useState("all");
   const [activeAssignee, setActiveAssignee] = useState("all");
+  const [showLowPriority, setShowLowPriority] = useState(false);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [localStatuses, setLocalStatuses] = useState<Record<number, InboxStatus>>({});
@@ -186,12 +213,16 @@ export function InboxPage() {
 
   const items = useMemo(() => (data ? toInboxItems(data, localStatuses) : []), [data, localStatuses]);
 
+  const actionableEvents = useMemo(() => dedupeActionableEvents(items.filter(isActionableEvent)), [items]);
+  const lowPriorityCount = Math.max(0, items.length - actionableEvents.length);
+  const queueItems = showLowPriority ? items : actionableEvents;
+
   const filteredItems = useMemo(() => {
-    return items.filter((item) => {
+    return queueItems.filter((item) => {
       const queryMatch = !query.trim() || `${item.title} ${item.site} ${item.summary}`.toLowerCase().includes(query.trim().toLowerCase());
       return queryMatch;
     });
-  }, [items, query]);
+  }, [query, queueItems]);
 
   const actionErrorMessage = (error: unknown) => {
     if (error instanceof ApiError && error.status === 401) return "请先登录 ProductAlert API，再处理情报。";
@@ -267,8 +298,8 @@ export function InboxPage() {
         <div>
           <div className="eyebrow">INTELLIGENCE INBOX</div>
           <h1>情报收件箱</h1>
-          <p>把新品上新、价格变化、库存变化和信息变化聚合成可处理的运营任务。</p>
-          <p className="workflow-hint">运营处理流：处理状态、负责人、处理备注、需跟进和误报原因会沉淀到每条变化记录。</p>
+          <p>只把新品、价格、库存和人工标记的重点变化送进待办；普通信息变化保留在采集记录中，不打扰你的工作队列。</p>
+          <p className="workflow-hint">运营处理流：先判断变化价值，再标记已处理、重点关注或误报；处理记录会沉淀到每条变化证据。</p>
         </div>
         <div className="page-actions">
           <button className="icon-button" type="button" onClick={refresh} aria-label="刷新情报收件箱"><RefreshCw size={17} /></button>
@@ -278,10 +309,10 @@ export function InboxPage() {
       </header>
 
       <section className="inbox-summary-grid" aria-label="情报概览">
-        <InboxSummary label="待处理" value={countBy(items, (item) => item.status === "unread")} icon={<AlertTriangle size={18} />} tone="orange" />
-        <InboxSummary label="重点关注" value={countBy(items, (item) => item.status === "watched")} icon={<Star size={18} />} tone="purple" />
-        <InboxSummary label="高严重程度" value={countBy(items, (item) => item.severity === "high")} icon={<ArrowUp size={18} />} tone="blue" />
-        <InboxSummary label="已处理" value={countBy(items, (item) => item.status === "processed")} icon={<CheckCircle2 size={18} />} tone="green" />
+        <InboxSummary label="待处理" value={countBy(actionableEvents, (item) => item.status === "unread")} icon={<AlertTriangle size={18} />} tone="orange" />
+        <InboxSummary label="重点关注" value={countBy(actionableEvents, (item) => item.status === "watched")} icon={<Star size={18} />} tone="purple" />
+        <InboxSummary label="高优先级" value={countBy(actionableEvents, (item) => item.severity === "high")} icon={<ArrowUp size={18} />} tone="blue" />
+        <InboxSummary label="已折叠信息变化" value={lowPriorityCount} icon={<Archive size={18} />} tone="green" />
       </section>
 
       <section className="panel inbox-controls" aria-label="情报筛选">
@@ -322,7 +353,9 @@ export function InboxPage() {
           <option value="数据质检">数据质检</option>
           <option value="竞品研究">竞品研究</option>
         </select>
-        <button className="button button-secondary" type="button"><Filter size={15} /> 筛选</button>
+        <button className="button button-secondary" type="button" onClick={() => setShowLowPriority((current) => !current)} aria-pressed={showLowPriority}>
+          <Filter size={15} /> {showLowPriority ? "只看行动情报" : `显示低价值信息 ${lowPriorityCount}`}
+        </button>
       </section>
 
       {actionMessage ? <div className={`operation-message ${actionTone}`} role="status">{actionMessage}</div> : null}
@@ -330,10 +363,10 @@ export function InboxPage() {
       <section className="panel inbox-list-panel">
         <div className="panel-heading">
           <div>
-            <div className="panel-kicker">REVIEW QUEUE</div>
-            <h2>待审阅变化</h2>
+            <div className="panel-kicker">ACTION QUEUE</div>
+            <h2>{showLowPriority ? "全部变化记录" : "行动情报"}</h2>
           </div>
-          <span className="monitor-count">{filteredItems.length} 条情报</span>
+          <span className="monitor-count">{filteredItems.length} 条{showLowPriority ? "记录" : "待办"}</span>
         </div>
         <div className="inbox-list">
           {filteredItems.length ? filteredItems.map((item) => <InboxRow key={item.id} item={item} updating={updatingId === item.id} onStatus={setStatus} />) : <InboxEmpty />}

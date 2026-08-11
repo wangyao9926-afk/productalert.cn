@@ -99,7 +99,7 @@ for (const component of ["MonitorsPage", "CreateMonitorPage", "InboxPage", "Chan
 }
 
 const monitors = read("src/features/monitors/MonitorsPage.tsx");
-for (const text of ["监控中心", "新建监控", "立即扫描", "暂停", "恢复", "编辑规则", "查看变化", "成功率", "最近扫描", "操作成功", "请先登录"]) {
+for (const text of ["监控中心", "新建监控", "立即扫描", "暂停", "恢复", "编辑规则", "成功率", "最近扫描", "监控运行状态", "操作成功", "请先登录"]) {
   assert(monitors.includes(text), `Monitoring Center is missing required text: ${text}`);
 }
 
@@ -132,6 +132,9 @@ assert(createMonitorPage.includes("/baseline/"), "Create Monitor Page must navig
 const monitorsPage = read("src/features/monitors/MonitorsPage.tsx");
 for (const text of ["deleteSite", "window.confirm", "删除监控", "Trash2"]) {
   assert(monitorsPage.includes(text), `Monitor Center is missing safe delete support: ${text}`);
+}
+for (const text of ["pausedCount", "scanHealth", "failureReason", "监控运行状态"]) {
+  assert(monitorsPage.includes(text), `Monitor Center must focus on crawl health: ${text}`);
 }
 
 for (const text of ["const [query, setQuery]", "onChange={(event) => setQuery(event.target.value)}", "filteredRows", "暂无匹配的监控任务"]) {
@@ -171,6 +174,9 @@ for (const text of ["assignee", "review_note", "false_positive_reason", "reviewP
 }
 for (const text of ["loadChangeEvents", "changeEventFilters", "activeSite", "activeAssignee", "severity: activeSeverity", "q: debouncedQuery", "setDebouncedQuery", "setData({ ...overview, events })", "负责人筛选", "全部站点"]) {
   assert(inbox.includes(text), `Intelligence Inbox must use backend filters: ${text}`);
+}
+for (const text of ["isActionableEvent", "dedupeActionableEvents", "actionableEvents", "showLowPriority"]) {
+  assert(inbox.includes(text), `Intelligence Inbox must keep its default queue actionable: ${text}`);
 }
 
 const inboxApi = read("src/api/inbox.ts");

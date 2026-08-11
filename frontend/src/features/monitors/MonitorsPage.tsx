@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  ArrowUpRight,
   CheckCircle2,
   Clock3,
   Edit3,
@@ -12,7 +11,6 @@ import {
   Search,
   ShieldCheck,
   Trash2,
-  Zap,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../api/client";
@@ -29,7 +27,7 @@ type MonitorRow = {
   status: MonitorStatus;
   lastScan: string;
   successRate: number;
-  changesToday: number;
+  scanHealth: "healthy" | "warning";
   failureReason: string;
   frequency: string;
 };
@@ -68,9 +66,9 @@ function buildMonitorRows(data: OverviewData): MonitorRow[] {
     const latestLog = siteLogs[0];
     const successfulScans = siteLogs.filter((log) => log.status === "success").length;
     const successRate = siteLogs.length ? Math.round((successfulScans / siteLogs.length) * 100) : 100;
-    const changesToday = data.events.filter((event) => event.site_id === site.id && event.status !== "reviewed").length;
     const sourceType = site.sources?.[0]?.source_type || "collection";
-    const status: MonitorStatus = site.enabled === false ? "paused" : latestLog?.status === "warning" || latestLog?.status === "failed" ? "warning" : "healthy";
+    const scanHealth = latestLog?.status === "warning" || latestLog?.status === "failed" ? "warning" : "healthy";
+    const status: MonitorStatus = site.enabled === false ? "paused" : scanHealth;
 
     return {
       id: site.id,
@@ -80,7 +78,7 @@ function buildMonitorRows(data: OverviewData): MonitorRow[] {
       status,
       lastScan: relativeTime(latestLog?.started_at),
       successRate,
-      changesToday,
+      scanHealth,
       failureReason: latestLog?.error_message || "无异常",
       frequency: site.scan_interval_minutes ? `${site.scan_interval_minutes} 分钟` : "每 60 分钟",
     };
@@ -90,9 +88,9 @@ function buildMonitorRows(data: OverviewData): MonitorRow[] {
 function summarize(rows: MonitorRow[]) {
   const active = rows.filter((row) => row.status !== "paused").length;
   const warning = rows.filter((row) => row.status === "warning").length;
-  const changes = rows.reduce((total, row) => total + row.changesToday, 0);
+  const pausedCount = rows.filter((row) => row.status === "paused").length;
   const averageRate = rows.length ? Math.round(rows.reduce((total, row) => total + row.successRate, 0) / rows.length) : 100;
-  return { active, warning, changes, averageRate };
+  return { active, warning, pausedCount, averageRate };
 }
 
 export function MonitorsPage() {
@@ -179,7 +177,7 @@ export function MonitorsPage() {
         <div>
           <div className="eyebrow">MONITOR CENTER</div>
           <h1>监控中心</h1>
-          <p>集中管理官网、集合页和商品页的新品上新、价格、库存与内容变化监控。</p>
+          <p>查看官网采集是否正常、手动扫描、调整频率或处理失败；需要判断的商业变化在情报收件箱处理。</p>
         </div>
         <div className="page-actions">
           <button className="icon-button" type="button" onClick={refresh} aria-label="刷新监控中心">
@@ -190,9 +188,9 @@ export function MonitorsPage() {
       </header>
 
       <section className="monitor-summary-grid" aria-label="监控概览">
-        <SummaryCard label="活跃监控" value={stats.active} detail="正在按计划扫描" icon={<ShieldCheck size={18} />} tone="blue" />
-        <SummaryCard label="待处理变化" value={stats.changes} detail="新品、价格或库存变化" icon={<Zap size={18} />} tone="purple" />
-        <SummaryCard label="需要关注" value={stats.warning} detail="失败或响应偏慢" icon={<AlertTriangle size={18} />} tone="orange" />
+        <SummaryCard label="监控运行状态" value={stats.active} detail="正在按计划扫描" icon={<ShieldCheck size={18} />} tone="blue" />
+        <SummaryCard label="采集异常" value={stats.warning} detail="失败、限流或解析异常" icon={<AlertTriangle size={18} />} tone="orange" />
+        <SummaryCard label="已暂停" value={stats.pausedCount} detail="暂不执行自动扫描" icon={<Pause size={18} />} tone="purple" />
         <SummaryCard label="平均成功率" value={`${stats.averageRate}%`} detail="最近扫描表现" icon={<CheckCircle2 size={18} />} tone="green" />
       </section>
 
@@ -215,10 +213,10 @@ export function MonitorsPage() {
       <section className="panel monitors-table-panel">
         <div className="panel-heading">
           <div>
-            <div className="panel-kicker">TASKS</div>
-            <h2>全部监控任务</h2>
+            <div className="panel-kicker">MONITOR HEALTH</div>
+            <h2>官网监控</h2>
           </div>
-          <span className="monitor-count">{filteredRows.length === rows.length ? `${rows.length} 个任务` : `${filteredRows.length} / ${rows.length} 个任务`}</span>
+          <span className="monitor-count">{filteredRows.length === rows.length ? `${rows.length} 个站点` : `${filteredRows.length} / ${rows.length} 个站点`}</span>
         </div>
 
         {rows.length === 0 ? (
@@ -235,7 +233,6 @@ export function MonitorsPage() {
                   <th>状态</th>
                   <th>最近扫描</th>
                   <th>成功率</th>
-                  <th>今日变化</th>
                   <th>失败原因</th>
                   <th>操作</th>
                 </tr>
@@ -287,14 +284,12 @@ function MonitorTableRow({ row, action, onScan, onToggle, onDelete }: { row: Mon
       <td><span className={`monitor-status ${row.status}`}><span className={`status-dot ${row.status === "warning" ? "warning" : "success"}`} />{statusText[row.status]}</span></td>
       <td><span className="time-cell"><Clock3 size={14} />{row.lastScan}</span><span className="table-sub">{row.frequency}</span></td>
       <td><strong>{row.successRate}%</strong></td>
-      <td><span className={row.changesToday ? "change-count active" : "change-count"}>{row.changesToday}</span></td>
       <td><span className={row.status === "warning" ? "failure-text warning" : "failure-text"}>{row.failureReason}</span></td>
       <td>
         <div className="monitor-actions">
           <button className="icon-action" type="button" aria-label={`${row.name} 立即扫描`} title="立即扫描" onClick={() => onScan(row)} disabled={scanning || toggling || deleting}><RefreshCw size={14} /></button>
           <button className="icon-action" type="button" aria-label={`${row.name} ${paused ? "恢复" : "暂停"}`} title={paused ? "恢复" : "暂停"} onClick={() => onToggle(row)} disabled={scanning || toggling || deleting}>{paused ? <Play size={14} /> : <Pause size={14} />}</button>
           <Link className="icon-action" to={`/monitors/${row.id}`} aria-label={`${row.name} 编辑规则`} title="编辑规则"><Edit3 size={14} /></Link>
-          <Link className="icon-action" to="/inbox" aria-label={`${row.name} 查看变化`} title="查看变化"><ArrowUpRight size={14} /></Link>
           <button className="icon-action danger-action" type="button" aria-label={`${row.name} 删除监控`} title="删除监控" onClick={() => onDelete(row)} disabled={scanning || toggling || deleting}><Trash2 size={14} /></button>
         </div>
       </td>

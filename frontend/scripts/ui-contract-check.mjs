@@ -133,7 +133,7 @@ const monitorsPage = read("src/features/monitors/MonitorsPage.tsx");
 for (const text of ["deleteSite", "window.confirm", "删除监控", "Trash2"]) {
   assert(monitorsPage.includes(text), `Monitor Center is missing safe delete support: ${text}`);
 }
-for (const text of ["pausedCount", "scanHealth", "failureReason", "监控运行状态"]) {
+for (const text of ["pausedCount", "scanHealth", "failureReason", "scanFailureReason", "lowSuccessRate", "监控运行状态"]) {
   assert(monitorsPage.includes(text), `Monitor Center must focus on crawl health: ${text}`);
 }
 

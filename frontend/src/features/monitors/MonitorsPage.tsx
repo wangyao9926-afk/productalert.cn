@@ -60,6 +60,14 @@ function relativeTime(value?: string | null) {
   return `${Math.round(minutes / 1440)} 天前`;
 }
 
+function scanFailureReason(latestLog: OverviewData["logs"][number] | undefined, successRate: number, scanCount: number) {
+  if (latestLog?.error_message) return latestLog.error_message;
+  if (latestLog?.status === "failed") return "最近一次扫描失败，但未返回具体错误";
+  if (latestLog?.status === "warning") return "最近一次扫描需要人工检查";
+  if (scanCount >= 2 && successRate < 80) return `最近 ${scanCount} 次扫描成功率仅 ${successRate}%`;
+  return "无异常";
+}
+
 function buildMonitorRows(data: OverviewData): MonitorRow[] {
   return data.sites.map((site) => {
     const siteLogs = data.logs.filter((log) => log.site_id === site.id);
@@ -67,7 +75,8 @@ function buildMonitorRows(data: OverviewData): MonitorRow[] {
     const successfulScans = siteLogs.filter((log) => log.status === "success").length;
     const successRate = siteLogs.length ? Math.round((successfulScans / siteLogs.length) * 100) : 100;
     const sourceType = site.sources?.[0]?.source_type || "collection";
-    const scanHealth = latestLog?.status === "warning" || latestLog?.status === "failed" ? "warning" : "healthy";
+    const lowSuccessRate = siteLogs.length >= 2 && successRate < 80;
+    const scanHealth = latestLog?.status === "warning" || latestLog?.status === "failed" || lowSuccessRate ? "warning" : "healthy";
     const status: MonitorStatus = site.enabled === false ? "paused" : scanHealth;
 
     return {
@@ -79,7 +88,7 @@ function buildMonitorRows(data: OverviewData): MonitorRow[] {
       lastScan: relativeTime(latestLog?.started_at),
       successRate,
       scanHealth,
-      failureReason: latestLog?.error_message || "无异常",
+      failureReason: scanFailureReason(latestLog, successRate, siteLogs.length),
       frequency: site.scan_interval_minutes ? `${site.scan_interval_minutes} 分钟` : "每 60 分钟",
     };
   });

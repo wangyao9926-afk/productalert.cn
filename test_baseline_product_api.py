@@ -74,6 +74,21 @@ class BaselineProductApiTests(unittest.TestCase):
                     "raw_text": "Waterproof Bag",
                 },
             )
+            self.false_positive_url = f"https://baseline-products-{marker}.example.com/collections/products/waterproof-bag"
+            insert_row(
+                db,
+                "products",
+                {
+                    "site_id": self.site_id,
+                    "source_id": source_id,
+                    "url": self.false_positive_url,
+                    "title": "Collection landing page",
+                    "item_type": "collection_page",
+                    "review_status": "false_positive",
+                    "content_hash": "false-positive-collection-hash",
+                    "raw_text": "Collection landing page",
+                },
+            )
             self.job_id = insert_row(
                 db,
                 "scan_jobs",
@@ -101,6 +116,7 @@ class BaselineProductApiTests(unittest.TestCase):
         products = self.client.get(f"/api/products?site_id={self.site_id}", headers=self.owner_headers)
 
         self.assertEqual(products.status_code, 200, products.text)
+        self.assertEqual(len(products.json()), 1)
         product = products.json()[0]
         self.assertEqual(product["item_type"], "product_detail")
         self.assertEqual(product["features"], ["Water resistant"])

@@ -5,13 +5,36 @@ import unittest
 from uuid import uuid4
 from unittest.mock import AsyncMock, patch
 
-from app.crawler import CatalogDiscoveryResult, ExtractedProduct, ProductCandidate, ProductFetchError, discover_product_candidates, fetch_result_from_response, jsonld_item_list_candidates, matches_catalog_candidate_rules, merge_catalog_candidates, product_from_woocommerce_payload, raise_for_fetch_failure, shopify_product_candidates, woocommerce_product_candidates_from_payload
+from app.crawler import CatalogDiscoveryResult, ExtractedProduct, ProductCandidate, ProductFetchError, classify_product_url, discover_product_candidates, fetch_result_from_response, jsonld_item_list_candidates, matches_catalog_candidate_rules, merge_catalog_candidates, product_from_woocommerce_payload, raise_for_fetch_failure, shopify_product_candidates, woocommerce_product_candidates_from_payload
 from app.db import execute_sql, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict
+from app.db_sqlite_maintenance import migrate_product_classification
 from app.monitor import create_scan_job, record_scan_candidate, scan_site
 from app.rate_limit import domain_cooldown_remaining, record_domain_rate_limit, record_domain_success, reset_domain_rate_limits
 
 
 class CatalogDiscoveryTests(unittest.TestCase):
+    def test_product_url_classifier_rejects_collection_and_compare_pages(self) -> None:
+        self.assertEqual(classify_product_url("https://shop.example.com/collections/products/tent"), ("collection_page", "false_positive"))
+        self.assertEqual(classify_product_url("https://shop.example.com/product/compare"), ("utility_page", "false_positive"))
+        self.assertEqual(classify_product_url("https://shop.example.com/products/tent"), ("product_detail", "confirmed"))
+
+    def test_product_classification_maintenance_reclassifies_existing_false_positive(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        email = f"classification-{marker}@monitor.internal"
+        try:
+            with get_db() as db:
+                user_id = insert_row(db, "users", {"email": email, "password_hash": "not-used"})
+                site_id = insert_row(db, "sites", {"user_id": user_id, "name": "Classifier store", "url": f"https://shop-{marker}.example.com", "scan_interval_minutes": 60, "notification_events": json_dumps(["product_new"])})
+                product_id = insert_row(db, "products", {"site_id": site_id, "url": f"https://shop-{marker}.example.com/collections/products/tent", "title": "Collection", "item_type": "product_detail", "review_status": "confirmed", "content_hash": "classification-test-hash", "raw_text": "Collection"})
+                migrate_product_classification(db)
+                product = row_to_dict(fetchone(db, "SELECT item_type, review_status FROM products WHERE id = ?", (product_id,)))
+            self.assertEqual(product["item_type"], "collection_page")
+            self.assertEqual(product["review_status"], "false_positive")
+        finally:
+            with get_db() as db:
+                execute_sql(db, "DELETE FROM users WHERE email = ?", (email,))
+
     def test_merges_catalog_candidates_and_preserves_all_discovery_sources(self) -> None:
         candidates = merge_catalog_candidates(
             [

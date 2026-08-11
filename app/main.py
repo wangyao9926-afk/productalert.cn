@@ -1021,7 +1021,11 @@ async def list_products(site_id: int | None = None, user: dict = CurrentUser) ->
         LEFT JOIN monitor_sources ON monitor_sources.id = products.source_id
     """
     params: list[int] = []
-    sql += " WHERE sites.user_id = ?"
+    sql += """
+        WHERE sites.user_id = ?
+          AND products.item_type = 'product_detail'
+          AND products.review_status != 'false_positive'
+    """
     params.append(user["id"])
     if site_id:
         sql += " AND products.site_id = ?"
@@ -1044,6 +1048,8 @@ async def export_products_csv(site_id: int | None = None, user: dict = CurrentUs
         JOIN sites ON sites.id = products.site_id
         LEFT JOIN monitor_sources ON monitor_sources.id = products.source_id
         WHERE sites.user_id = ?
+          AND products.item_type = 'product_detail'
+          AND products.review_status != 'false_positive'
     """
     params: list[int] = [user["id"]]
     if site_id:

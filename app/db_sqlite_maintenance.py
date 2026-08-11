@@ -175,9 +175,9 @@ def migrate_product_classification(db: sqlite3.Connection) -> None:
         "SELECT id, url, item_type, review_status FROM products"
     ).fetchall()
     for row in rows:
-        if row["review_status"] in {"confirmed", "false_positive"} and row["item_type"] != "unknown":
-            continue
         item_type, review_status = classify_product_url(row["url"])
+        if row["item_type"] == item_type and row["review_status"] == review_status:
+            continue
         db.execute(
             "UPDATE products SET item_type = ?, review_status = ? WHERE id = ?",
             (item_type, review_status, row["id"]),

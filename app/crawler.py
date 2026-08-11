@@ -207,14 +207,24 @@ def classify_product_url(url: str) -> tuple[str, str]:
         "categories",
         "catalog",
     )
+    utility_markers = (
+        "compare",
+        "comparison",
+        "compare-products",
+        "search",
+        "cart",
+        "account",
+    )
     product_markers = ("products", "product")
 
+    if any(segment in collection_markers for segment in segments):
+        return "collection_page", "false_positive"
+    if segments and segments[-1] in utility_markers:
+        return "utility_page", "false_positive"
     if any(segment in product_markers for segment in segments) and len(segments) >= 2:
         return "product_detail", "confirmed"
     if any(marker in joined for marker in promo_markers):
         return "promo_page", "false_positive"
-    if any(segment in collection_markers for segment in segments):
-        return "collection_page", "false_positive"
     return "unknown", "unreviewed"
 
 

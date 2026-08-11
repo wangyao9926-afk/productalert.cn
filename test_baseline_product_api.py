@@ -46,7 +46,7 @@ class BaselineProductApiTests(unittest.TestCase):
                     "scan_interval_minutes": 60,
                 },
             )
-            insert_row(
+            self.product_id = insert_row(
                 db,
                 "products",
                 {
@@ -75,7 +75,7 @@ class BaselineProductApiTests(unittest.TestCase):
                 },
             )
             self.false_positive_url = f"https://baseline-products-{marker}.example.com/collections/products/waterproof-bag"
-            insert_row(
+            self.false_positive_id = insert_row(
                 db,
                 "products",
                 {
@@ -127,6 +127,40 @@ class BaselineProductApiTests(unittest.TestCase):
         self.assertEqual(product["url"], self.product_url)
         self.assertEqual(product["availability"], "in_stock")
         self.assertEqual(product["currency"], "USD")
+
+        detail = self.client.get(f"/api/products/{self.product_id}", headers=self.owner_headers)
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["id"], self.product_id)
+
+        hidden_detail = self.client.get(f"/api/products/{self.false_positive_id}", headers=self.owner_headers)
+        self.assertEqual(hidden_detail.status_code, 404, hidden_detail.text)
+
+        sites = self.client.get("/api/sites", headers=self.owner_headers)
+        self.assertEqual(sites.status_code, 200, sites.text)
+        site = next(item for item in sites.json() if item["id"] == self.site_id)
+        self.assertEqual(site["product_count"], 1)
+
+    def test_site_scoped_product_list_is_not_truncated_by_global_preview_limit(self) -> None:
+        with get_db() as db:
+            for index in range(205):
+                insert_row(
+                    db,
+                    "products",
+                    {
+                        "site_id": self.site_id,
+                        "url": f"https://baseline-products-extra.example.com/products/{index}",
+                        "title": f"Extra product {index}",
+                        "item_type": "product_detail",
+                        "review_status": "confirmed",
+                        "content_hash": f"extra-product-hash-{index}",
+                        "raw_text": f"Extra product {index}",
+                    },
+                )
+
+        products = self.client.get(f"/api/products?site_id={self.site_id}", headers=self.owner_headers)
+
+        self.assertEqual(products.status_code, 200, products.text)
+        self.assertEqual(len(products.json()), 206)
 
     def test_other_user_cannot_read_site_baseline_summary(self) -> None:
         response = self.other_client.get(f"/api/sites/{self.site_id}/baseline-summary", headers=self.other_headers)

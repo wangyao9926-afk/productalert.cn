@@ -224,7 +224,7 @@ for (const text of ["URLSearchParams", "product-thumb", "onError", "slice(0, 2)"
   assert(products.includes(text), `Products Page is missing enriched product-library behavior: ${text}`);
 }
 
-for (const text of ["selectedSiteId", "setSelectedSiteId", "当前品牌", "更多品牌", "brand-switcher", "brand-search-input", "siteSummaries"]) {
+for (const text of ["selectedSiteId", "setSelectedSiteId", "当前品牌", "品牌切换", "brand-switcher", "brand-search-input", "siteProducts", "loadProducts", "siteSummaries"]) {
   assert(products.includes(text), `Products Page must support a scalable brand switcher: ${text}`);
 }
 assert(!products.includes("全部站点"), "Products Page must not mix different brands into an all-sites product list");

@@ -51,13 +51,20 @@ export function loadProducts(siteId?: number): Promise<Product[]> {
   return getJson<Product[]>(`/api/products${query}`);
 }
 
+export function loadProduct(productId: number | string): Promise<Product> {
+  return getJson<Product>(`/api/products/${productId}`);
+}
+
 export function loadPriceMatrix(): Promise<ProductMatchGroup[]> {
   return getJson<ProductMatchGroup[]>("/api/product-match-groups");
 }
 
 export async function loadProductDetailContext(productId: number | string): Promise<ProductDetailContext> {
   const overview = await loadOverview();
-  const product = overview.products.find((item) => String(item.id) === String(productId)) || null;
+  const fallbackProduct = overview.products.find((item) => String(item.id) === String(productId)) || null;
+  const product = overview.live
+    ? await loadProduct(productId).catch(() => fallbackProduct)
+    : fallbackProduct;
   const events = overview.events.filter((event) => {
     if (!product) return false;
     return event.product_id === product.id

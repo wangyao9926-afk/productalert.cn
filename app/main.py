@@ -489,7 +489,20 @@ async def list_sites(user: dict = CurrentUser) -> list[dict]:
     with get_db() as db:
         rows = fetchall(
             db,
-            "SELECT * FROM sites WHERE user_id = ? ORDER BY created_at DESC",
+            """
+            SELECT
+                sites.*,
+                (
+                    SELECT COUNT(*)
+                    FROM products
+                    WHERE products.site_id = sites.id
+                      AND products.item_type = 'product_detail'
+                      AND products.review_status != 'false_positive'
+                ) AS product_count
+            FROM sites
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
             (user["id"],),
         )
     sources = load_sources_by_site()
@@ -1030,11 +1043,37 @@ async def list_products(site_id: int | None = None, user: dict = CurrentUser) ->
     if site_id:
         sql += " AND products.site_id = ?"
         params.append(site_id)
-    sql += " ORDER BY products.detected_at DESC LIMIT 200"
+    sql += " ORDER BY products.detected_at DESC LIMIT ?"
+    params.append(5000 if site_id else 200)
 
     with get_db() as db:
         rows = fetchall(db, sql, params)
     return [enrich_product(row) for row in rows]
+
+
+@app.get("/api/products/{product_id}")
+async def get_product(product_id: int, user: dict = CurrentUser) -> dict:
+    with get_db() as db:
+        product = fetchone(
+            db,
+            """
+            SELECT
+                products.*,
+                sites.name AS site_name,
+                monitor_sources.source_type AS source_type
+            FROM products
+            JOIN sites ON sites.id = products.site_id
+            LEFT JOIN monitor_sources ON monitor_sources.id = products.source_id
+            WHERE products.id = ?
+              AND sites.user_id = ?
+              AND products.item_type = 'product_detail'
+              AND products.review_status != 'false_positive'
+            """,
+            (product_id, user["id"]),
+        )
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return enrich_product(product)
 
 
 @app.get("/api/export/products.csv")

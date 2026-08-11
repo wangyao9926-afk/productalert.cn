@@ -4,6 +4,7 @@ export type Site = {
   url: string;
   enabled?: boolean;
   scan_interval_minutes?: number;
+  product_count?: number;
   sources?: Array<{ id: number; source_type?: string; enabled?: boolean }>;
 };
 

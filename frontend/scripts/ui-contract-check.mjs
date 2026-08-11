@@ -266,5 +266,10 @@ const overview = read("src/features/overview/OverviewPage.tsx");
 for (const text of ["真实 API", "演示数据", "需要登录", "API 不可用"]) {
   assert(overview.includes(text), `Overview data source status is missing required text: ${text}`);
 }
+for (const text of ["actionableEvents", "warningSites", "TODAY ACTIONS", "需要处理的站点", "查看情报收件箱"]) {
+  assert(overview.includes(text), `Overview must route users to the next actionable task: ${text}`);
+}
+assert(!overview.includes("RECENT CHANGES"), "Overview must not duplicate the full change log");
+assert(!overview.includes("health-strip"), "Overview must not expose infrastructure status intended for Operations");
 
 console.log("UI contract checks passed.");

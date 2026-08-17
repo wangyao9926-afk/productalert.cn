@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.crawler import ProductCandidate, ProductFetchError, canonical_candidate_key, classify_product_url, discover_catalog, extract_candidate_product, extract_source_text, normalize_url
+from app.crawler import ProductCandidate, ProductFetchError, candidate_is_confirmed_product, canonical_candidate_key, classify_product_url, discover_catalog, extract_candidate_product, extract_source_text, normalize_url
 from app.db import DB_BACKEND, boolean_true_sql, execute_sql, fetchall, fetchone, get_db, insert_ignore, insert_row, is_integrity_error, json_dumps, row_to_dict, select_by_id, storage_column, update_by_id, update_by_id_when
 from app.evidence_store import load_screenshot, save_screenshot
 from app.notifier import change_event_payload, should_notify_event
@@ -837,18 +837,21 @@ async def extract_and_store_product(
     discovery_status: str,
     notify: bool,
     record_changes: bool = True,
-) -> dict | None:
+) -> tuple[dict | None, str]:
     candidate_url = normalize_url(candidate.url)
     item_type, review_status = classify_product_url(candidate_url)
-    if item_type != "product_detail":
-        return None
+    confirmed_candidate = candidate_is_confirmed_product(candidate)
+    if item_type != "product_detail" and not confirmed_candidate:
+        return None, "non_product"
 
     product = await extract_candidate_product(candidate)
     if not product:
-        return None
+        return None, "parse_failed" if confirmed_candidate else "non_product"
 
     product_url = normalize_url(product.url)
     item_type, review_status = classify_product_url(product_url)
+    if item_type != "product_detail" and confirmed_candidate:
+        item_type, review_status = "product_detail", "confirmed"
     if item_type == "product_detail" and product.confidence_score < 0.7:
         review_status = "needs_review"
     event_source_data = {**source_data, "_notify_enabled": notify}
@@ -890,7 +893,7 @@ async def extract_and_store_product(
             sync_product_variants(db, exists["id"], product, event_source_data, source_id, record_changes)
             sync_product_identifiers(db, exists["id"], product)
             refresh_product_match_groups(db, exists["id"])
-            return None
+            return None, "existing"
         product_id = insert_row(
             db,
             "products",
@@ -949,7 +952,7 @@ async def extract_and_store_product(
     if record_changes and discovery_status == "new":
         with get_db() as db:
             record_new_product_event(db, saved, event_source_data, source_id)
-    return saved
+    return saved, "stored"
 
 
 def create_text_diff(before: str, after: str, limit: int = 36) -> tuple[list[dict], int, int]:
@@ -1215,7 +1218,7 @@ async def scan_source(
                 record_scan_candidate(job_id, candidate.url, status="pending", payload=candidate.payload)
                 rate_limited = False
                 try:
-                    saved = await extract_and_store_product(
+                    saved, storage_outcome = await extract_and_store_product(
                         candidate,
                         source_data,
                         source_id,
@@ -1224,8 +1227,15 @@ async def scan_source(
                         record_changes=False,
                     )
                     quality["attempted_product_count"] += 1
-                    quality["stored_product_count"] += 1
-                    record_scan_candidate(job_id, candidate.url, status="stored", http_status=200, payload=candidate.payload)
+                    if storage_outcome in {"stored", "existing"}:
+                        quality["stored_product_count"] += 1
+                        record_scan_candidate(job_id, candidate.url, status="stored", http_status=200, payload=candidate.payload)
+                    elif storage_outcome == "parse_failed":
+                        quality["parse_failed_count"] += 1
+                        record_scan_candidate(job_id, candidate.url, status="parse_failed", http_status=200, error_category="parse_failed", payload=candidate.payload)
+                    else:
+                        quality["non_product_count"] += 1
+                        record_scan_candidate(job_id, candidate.url, status="non_product", http_status=200, payload=candidate.payload)
                 except ProductFetchError as exc:
                     quality["attempted_product_count"] += 1
                     if exc.error_category == "rate_limited":
@@ -1386,7 +1396,7 @@ async def scan_source(
                 discovery_status = "new"
 
             try:
-                saved = await extract_and_store_product(
+                saved, _ = await extract_and_store_product(
                     candidate,
                     source_data,
                     source_id,

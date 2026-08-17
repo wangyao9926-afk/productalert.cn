@@ -6,7 +6,7 @@ from uuid import uuid4
 from unittest.mock import AsyncMock, patch
 
 from app.crawler import CatalogDiscoveryResult, ExtractedProduct, ProductCandidate, ProductFetchError, classify_product_url, discover_product_candidates, fetch_result_from_response, jsonld_item_list_candidates, matches_catalog_candidate_rules, merge_catalog_candidates, product_from_woocommerce_payload, raise_for_fetch_failure, shopify_product_candidates, woocommerce_product_candidates_from_payload
-from app.db import execute_sql, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict
+from app.db import execute_sql, fetchall, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict
 from app.db_sqlite_maintenance import migrate_product_classification
 from app.monitor import create_scan_job, record_scan_candidate, scan_site
 from app.rate_limit import domain_cooldown_remaining, record_domain_rate_limit, record_domain_success, reset_domain_rate_limits
@@ -256,6 +256,69 @@ class CatalogCandidatePersistenceTests(unittest.TestCase):
 
 
 class CatalogBaselineQualityTests(unittest.TestCase):
+    def test_unparseable_product_candidate_is_not_counted_as_verified_catalog_product(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        email = f"unparseable-{marker}@monitor.internal"
+        site_url = f"https://unparseable-{marker}.example.com"
+        with get_db() as db:
+            user_id = insert_row(db, "users", {"email": email, "password_hash": "not-used"})
+            site_id = insert_row(
+                db,
+                "sites",
+                {"user_id": user_id, "name": "Unparseable catalog", "url": site_url, "scan_interval_minutes": 60, "notification_events": json_dumps(["product_new"])},
+            )
+            insert_row(db, "monitor_sources", {"site_id": site_id, "source_type": "homepage", "url": site_url, "scan_interval_minutes": 60})
+        job_id = create_scan_job(site_id, None, "site_scan", "baseline")
+        candidates = [
+            ProductCandidate(
+                f"{site_url}/shop/verified",
+                payload={"kind": "woocommerce_product", "product": {"id": 1}},
+                discovery_sources=("woocommerce_store_api",),
+            ),
+            ProductCandidate(f"{site_url}/products/not-a-product"),
+        ]
+        verified_product = ExtractedProduct(
+            url=candidates[0].url,
+            title="Verified product",
+            description="A verified product page",
+            image_url=None,
+            price="$19",
+            price_amount=19.0,
+            currency="USD",
+            compare_at_price=None,
+            availability="in_stock",
+            variant_count=1,
+            variants=[],
+            features=["Verified"],
+            extraction_source="test",
+            confidence_score=0.95,
+            field_confidence={"price": 1.0},
+            confidence_reasons=[],
+            content_hash=f"unparseable-{marker}",
+            raw_text="Verified product",
+        )
+        discovery = CatalogDiscoveryResult(candidates=candidates, reference_count=2, discovery_source_counts={"product_sitemap": 2}, adapter_attempts=[])
+        try:
+            with (
+                patch("app.monitor.discover_catalog", new=AsyncMock(return_value=discovery)),
+                patch("app.monitor.capture_source_snapshot", new=AsyncMock(return_value=None)),
+                patch("app.monitor.extract_candidate_product", new=AsyncMock(side_effect=[verified_product, None])),
+            ):
+                result = asyncio.run(scan_site(site_id, trigger_type="baseline", job_id=job_id))
+
+            quality = result["progress"]["quality"]
+            self.assertEqual(quality["stored_product_count"], 1)
+            self.assertEqual(quality["parse_failed_count"], 1)
+            self.assertEqual(result["progress"]["product_count"], 1)
+            with get_db() as db:
+                source_job = fetchone(db, "SELECT id FROM scan_jobs WHERE parent_job_id = ? ORDER BY id DESC LIMIT 1", (job_id,))
+                candidate_statuses = [row["status"] for row in fetchall(db, "SELECT status FROM scan_job_candidates WHERE job_id = ? ORDER BY id", (source_job["id"],))]
+            self.assertEqual(candidate_statuses, ["stored", "parse_failed"])
+        finally:
+            with get_db() as db:
+                execute_sql(db, "DELETE FROM users WHERE email = ?", (email,))
+
     def test_scan_quality_exposes_catalog_reference_sources_and_incomplete_coverage(self) -> None:
         init_db()
         marker = uuid4().hex

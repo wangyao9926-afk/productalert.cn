@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../api/client";
-import { deleteSite, getSiteBaselineSummary, triggerSiteScan, updateSiteEnabled, type SiteBaselineSummary } from "../../api/monitors";
+import { deleteSite, getSiteBaselineSummary, triggerSiteScan, updateSiteEnabled, type ScanQuality, type SiteBaselineSummary } from "../../api/monitors";
 import { loadOverview, type OverviewData } from "../../api/overview";
 
 type MonitorStatus = "healthy" | "warning" | "paused" | "pending";
@@ -32,6 +32,8 @@ type MonitorRow = {
   catalogState: CatalogState;
   catalogLabel: string;
   catalogDetail: string;
+  catalogHref: string;
+  catalogTitle: string;
   failureReason: string;
   frequency: string;
 };
@@ -73,30 +75,48 @@ function scanFailureReason(latestLog: OverviewData["logs"][number] | undefined, 
   return "无异常";
 }
 
-function catalogBaseline(summary: SiteBaselineSummary | undefined): Pick<MonitorRow, "catalogState" | "catalogLabel" | "catalogDetail"> {
+function catalogIssueSummary(quality: ScanQuality | undefined) {
+  const issues: string[] = [];
+  if (quality?.rate_limited_count) issues.push(`限流 ${quality.rate_limited_count}`);
+  if (quality?.blocked_count) issues.push(`访问受限 ${quality.blocked_count}`);
+  if (quality?.fetch_failed_count) issues.push(`读取失败 ${quality.fetch_failed_count}`);
+  if (quality?.parse_failed_count) issues.push(`解析失败 ${quality.parse_failed_count}`);
+  if (quality?.pending_retry_count) issues.push(`待重试 ${quality.pending_retry_count}`);
+  return issues.join("，");
+}
+
+function catalogBaseline(summary: SiteBaselineSummary | undefined): Pick<MonitorRow, "catalogState" | "catalogLabel" | "catalogDetail" | "catalogHref" | "catalogTitle"> {
   if (!summary) {
-    return { catalogState: "ready", catalogLabel: "基线状态待同步", catalogDetail: "暂未取得本次扫描证据" };
+    return { catalogState: "ready", catalogLabel: "基线状态待同步", catalogDetail: "暂未取得本次扫描证据", catalogHref: "/products", catalogTitle: "打开产品库" };
   }
 
-  const latestJob = summary?.latest_job;
+  const latestJob = summary.latest_job;
   const progress = latestJob?.result?.progress;
   const quality = progress?.quality;
-  const productCount = summary?.product_count || 0;
+  const productCount = summary.product_count || 0;
   const waitingForScan = latestJob?.status === "queued" || latestJob?.status === "running" || (!latestJob && productCount === 0);
+  const productHref = `/products?site_id=${summary.site_id}`;
+  const evidenceHref = latestJob ? `/monitors/${summary.site_id}/baseline/${latestJob.id}` : productHref;
+  const issues = catalogIssueSummary(quality);
 
   if (waitingForScan) {
-    return { catalogState: "pending", catalogLabel: "待建立基线", catalogDetail: "首次扫描后统计商品数量" };
+    return { catalogState: "pending", catalogLabel: "待建立基线", catalogDetail: "首次扫描后统计商品数量", catalogHref: evidenceHref, catalogTitle: "查看扫描进度" };
   }
-  if (summary?.baseline_completed && productCount > 0) {
+  if (summary.baseline_completed && productCount > 0) {
     const referenceCount = quality?.catalog_reference_count;
-    const detail = typeof referenceCount === "number" ? `已核验 ${productCount} / ${referenceCount} 个商品` : `已入库 ${productCount} 个商品`;
-    return { catalogState: "ready", catalogLabel: `${productCount} 个商品`, catalogDetail: detail };
+    if (quality?.coverage_state === "verified") {
+      return { catalogState: "ready", catalogLabel: `${productCount} 个商品`, catalogDetail: `目录已核验：${productCount} / ${referenceCount ?? productCount}`, catalogHref: productHref, catalogTitle: "查看产品库" };
+    }
+    if (quality?.coverage_state === "incomplete" || quality?.coverage_state === "failed") {
+      return { catalogState: "warning", catalogLabel: `${productCount} 个商品`, catalogDetail: `目录不完整：${issues || "需要继续扫描"}`, catalogHref: evidenceHref, catalogTitle: "查看扫描证据并继续扫描" };
+    }
+    return { catalogState: "warning", catalogLabel: `${productCount} 个商品`, catalogDetail: "目录数量待核验：未取得公开目录参考", catalogHref: evidenceHref, catalogTitle: "查看扫描证据" };
   }
   if (productCount === 0) {
     const cause = latestJob?.message || (quality?.rate_limited_count ? "官网限流，等待重试" : "未发现可验证的商品页");
-    return { catalogState: "warning", catalogLabel: "未建立商品基线", catalogDetail: cause };
+    return { catalogState: "warning", catalogLabel: "未建立商品基线", catalogDetail: cause, catalogHref: evidenceHref, catalogTitle: "查看扫描证据并重新扫描" };
   }
-  return { catalogState: "ready", catalogLabel: `${productCount} 个商品`, catalogDetail: "已入库，目录覆盖待核验" };
+  return { catalogState: "warning", catalogLabel: `${productCount} 个商品`, catalogDetail: `目录不完整：${issues || "本次扫描尚未完成"}`, catalogHref: evidenceHref, catalogTitle: "查看扫描证据并继续扫描" };
 }
 
 function buildMonitorRows(data: OverviewData, baselineBySite: Record<number, SiteBaselineSummary | undefined>): MonitorRow[] {
@@ -123,6 +143,8 @@ function buildMonitorRows(data: OverviewData, baselineBySite: Record<number, Sit
       catalogState: catalog.catalogState,
       catalogLabel: catalog.catalogLabel,
       catalogDetail: catalog.catalogDetail,
+      catalogHref: catalog.catalogHref,
+      catalogTitle: catalog.catalogTitle,
       failureReason: scanHealth === "warning" ? scanFailureReason(latestLog, successRate, siteLogs.length) : catalog.catalogState === "warning" ? catalog.catalogDetail : "无异常",
       frequency: site.scan_interval_minutes ? `${site.scan_interval_minutes} 分钟` : "每 60 分钟",
     };
@@ -342,7 +364,7 @@ function MonitorTableRow({ row, action, onScan, onToggle, onDelete }: { row: Mon
       <td><span className="time-cell"><Clock3 size={14} />{row.lastScan}</span><span className="table-sub">{row.frequency}</span></td>
       <td><strong>{row.successRate}%</strong></td>
       <td>
-        <Link className={`catalog-baseline ${row.catalogState}`} to={`/products?site_id=${row.id}`} title={`查看 ${row.name} 的产品库`}>
+        <Link className={`catalog-baseline ${row.catalogState}`} to={row.catalogHref} title={`${row.name}：${row.catalogTitle}`}>
           <strong>{row.catalogLabel}</strong>
           <span>{row.catalogDetail}</span>
         </Link>

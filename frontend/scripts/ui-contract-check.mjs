@@ -199,7 +199,7 @@ for (const text of ["loadChangeDetail", "loadChangeEvents", "ChangeEventFilters"
 }
 
 const changeDetail = read("src/features/changes/ChangeDetailPage.tsx");
-for (const text of ["变化详情", "字段差异", "价格差异", "截图对比", "文本 Diff", "置信度", "严重程度", "扫描元数据", "处理记录", "标记误报"]) {
+for (const text of ["变化详情", "字段差异", "价格差异", "截图对比", "文本 Diff", "证据状态", "待核验", "严重程度", "扫描元数据", "处理记录", "标记误报"]) {
   assert(changeDetail.includes(text), `Change Detail is missing required text: ${text}`);
 }
 for (const text of ["负责人", "处理备注", "处理状态", "需跟进", "误报原因", "运营处理记录"]) {

@@ -137,52 +137,15 @@ function buildFieldDiff(event: ChangeEvent | ChangeDetail): FieldDiff[] {
     ];
   }
 
-  if (event.change_type === "price_changed" || event.change_type === "price_change") {
-    return [
-      { field: "价格", before: "¥450", after: "¥475", highlight: true },
-      { field: "库存", before: "有货", after: "有货", highlight: false },
-      { field: "商品标题", before: event.product_title || "未命名产品", after: event.product_title || "未命名产品", highlight: false },
-    ];
-  }
-
-  if (event.change_type === "availability_changed" || event.change_type === "availability_change") {
-    return [
-      { field: "库存", before: "售罄", after: "有货", highlight: true },
-      { field: "尺码", before: "S / M", after: "S / M / L", highlight: true },
-      { field: "价格", before: "¥299", after: "¥299", highlight: false },
-    ];
-  }
-
-  if (event.change_type === "new_product" || event.change_type === "product_new") {
-    return [
-      { field: "商品状态", before: "未发现", after: "新增商品", highlight: true },
-      { field: "商品标题", before: "—", after: event.product_title || "未命名产品", highlight: true },
-      { field: "商品链接", before: "—", after: event.product_url || "待采集", highlight: true },
-    ];
-  }
-
-  if (event.change_type === "variant_new") {
-    return [
-      { field: "新增变体", before: "—", after: event.summary || "新增规格", highlight: true },
-      { field: "商品标题", before: event.product_title || "未命名产品", after: event.product_title || "未命名产品", highlight: false },
-    ];
-  }
-
   return [
-    { field: "页面文案", before: "旧版活动说明", after: event.summary || "新版活动说明", highlight: true },
-    { field: "标题", before: event.product_title || "未命名产品", after: event.product_title || "未命名产品", highlight: false },
-    { field: "图片数量", before: "5", after: "6", highlight: true },
+    { field: "变化摘要", before: "尚未记录可核对的前后值", after: event.summary || "检测到变化，等待下一次抓取确认", highlight: true },
+    { field: "验证状态", before: "—", after: "等待真实快照或字段 Diff", highlight: false },
   ];
 }
 
 function confidenceFor(event?: ChangeEvent | ChangeDetail, mode: DetailMode = "fallback") {
-  if (!event) return 82;
-  if (mode === "real" && (event as ChangeDetail).snapshot_after) return 92;
-  if (event.change_type === "new_product" || event.change_type === "product_new") return 94;
-  if (event.change_type === "variant_new") return 92;
-  if (event.change_type === "price_changed" || event.change_type === "price_change") return 91;
-  if (event.change_type === "availability_changed" || event.change_type === "availability_change") return 86;
-  return 78;
+  if (mode === "real" && (event as ChangeDetail).snapshot_after) return "已验证";
+  return "待核验";
 }
 
 export function ChangeDetailPage() {
@@ -344,7 +307,7 @@ export function ChangeDetailPage() {
 
       <section className="detail-summary-grid" aria-label="变化审计摘要">
         <DetailMetric label="变化类型" value={changeTypeLabels[event.change_type || ""] || "信息变化"} detail={event.site_name || "未知站点"} icon={<Sparkles size={18} />} tone="blue" />
-        <DetailMetric label="置信度" value={`${confidence}%`} detail={detailMode === "real" ? "基于真实快照和事件详情" : "基于列表事件派生"} icon={<ShieldAlert size={18} />} tone="green" />
+        <DetailMetric label="证据状态" value={confidence} detail={detailMode === "real" ? "基于真实快照和事件详情" : "尚无前后快照，不能确认变化准确性"} icon={<ShieldAlert size={18} />} tone="green" />
         <DetailMetric label="严重程度" value={severity} detail="用于运营优先级" icon={<AlertTriangle size={18} />} tone="orange" />
         <DetailMetric label="处理状态" value={reviewStatusText[reviewStatus]} detail={`负责人：${reviewOwner}`} icon={<Clock3 size={18} />} tone="purple" />
       </section>

@@ -112,6 +112,9 @@ const monitorApi = read("src/api/monitors.ts");
 for (const text of ["createMonitorAndStartBaseline", "getScanJob", "triggerSiteScan", "updateSiteEnabled", "deleteSite", "/api/sites", "/scan", "/api/scan-jobs", "notification_events"]) {
   assert(monitorApi.includes(text), `Monitor API client is missing required text: ${text}`);
 }
+for (const text of ["SiteBaselineSummary", "getSiteBaselineSummary", "baseline-summary", "product_count"]) {
+  assert(monitorApi.includes(text), `Monitor API client must expose catalog-baseline evidence: ${text}`);
+}
 
 const baselineScanPage = read("src/features/monitors/BaselineScanPage.tsx");
 for (const text of ["setInterval", "已发现", "已处理", "查看产品库", "getScanJob", "triggerSiteScan"]) {
@@ -133,7 +136,7 @@ const monitorsPage = read("src/features/monitors/MonitorsPage.tsx");
 for (const text of ["deleteSite", "window.confirm", "删除监控", "Trash2"]) {
   assert(monitorsPage.includes(text), `Monitor Center is missing safe delete support: ${text}`);
 }
-for (const text of ["pausedCount", "scanHealth", "failureReason", "scanFailureReason", "lowSuccessRate", "监控运行状态"]) {
+for (const text of ["pausedCount", "scanHealth", "failureReason", "scanFailureReason", "lowSuccessRate", "baselineBySite", "catalogBaseline", "商品基线", "待建立基线"]) {
   assert(monitorsPage.includes(text), `Monitor Center must focus on crawl health: ${text}`);
 }
 

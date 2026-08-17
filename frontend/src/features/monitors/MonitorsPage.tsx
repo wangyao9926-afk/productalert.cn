@@ -14,10 +14,11 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../api/client";
-import { deleteSite, triggerSiteScan, updateSiteEnabled } from "../../api/monitors";
+import { deleteSite, getSiteBaselineSummary, triggerSiteScan, updateSiteEnabled, type SiteBaselineSummary } from "../../api/monitors";
 import { loadOverview, type OverviewData } from "../../api/overview";
 
-type MonitorStatus = "healthy" | "warning" | "paused";
+type MonitorStatus = "healthy" | "warning" | "paused" | "pending";
+type CatalogState = "ready" | "warning" | "pending";
 
 type MonitorRow = {
   id: number;
@@ -28,6 +29,9 @@ type MonitorRow = {
   lastScan: string;
   successRate: number;
   scanHealth: "healthy" | "warning";
+  catalogState: CatalogState;
+  catalogLabel: string;
+  catalogDetail: string;
   failureReason: string;
   frequency: string;
 };
@@ -50,6 +54,7 @@ const statusText: Record<MonitorStatus, string> = {
   healthy: "正常",
   warning: "需关注",
   paused: "已暂停",
+  pending: "待建立基线",
 };
 
 function relativeTime(value?: string | null) {
@@ -68,7 +73,33 @@ function scanFailureReason(latestLog: OverviewData["logs"][number] | undefined, 
   return "无异常";
 }
 
-function buildMonitorRows(data: OverviewData): MonitorRow[] {
+function catalogBaseline(summary: SiteBaselineSummary | undefined): Pick<MonitorRow, "catalogState" | "catalogLabel" | "catalogDetail"> {
+  if (!summary) {
+    return { catalogState: "ready", catalogLabel: "基线状态待同步", catalogDetail: "暂未取得本次扫描证据" };
+  }
+
+  const latestJob = summary?.latest_job;
+  const progress = latestJob?.result?.progress;
+  const quality = progress?.quality;
+  const productCount = summary?.product_count || 0;
+  const waitingForScan = latestJob?.status === "queued" || latestJob?.status === "running" || (!latestJob && productCount === 0);
+
+  if (waitingForScan) {
+    return { catalogState: "pending", catalogLabel: "待建立基线", catalogDetail: "首次扫描后统计商品数量" };
+  }
+  if (summary?.baseline_completed && productCount > 0) {
+    const referenceCount = quality?.catalog_reference_count;
+    const detail = typeof referenceCount === "number" ? `已核验 ${productCount} / ${referenceCount} 个商品` : `已入库 ${productCount} 个商品`;
+    return { catalogState: "ready", catalogLabel: `${productCount} 个商品`, catalogDetail: detail };
+  }
+  if (productCount === 0) {
+    const cause = latestJob?.message || (quality?.rate_limited_count ? "官网限流，等待重试" : "未发现可验证的商品页");
+    return { catalogState: "warning", catalogLabel: "未建立商品基线", catalogDetail: cause };
+  }
+  return { catalogState: "ready", catalogLabel: `${productCount} 个商品`, catalogDetail: "已入库，目录覆盖待核验" };
+}
+
+function buildMonitorRows(data: OverviewData, baselineBySite: Record<number, SiteBaselineSummary | undefined>): MonitorRow[] {
   return data.sites.map((site) => {
     const siteLogs = data.logs.filter((log) => log.site_id === site.id);
     const latestLog = siteLogs[0];
@@ -77,7 +108,8 @@ function buildMonitorRows(data: OverviewData): MonitorRow[] {
     const sourceType = site.sources?.[0]?.source_type || "collection";
     const lowSuccessRate = siteLogs.length >= 2 && successRate < 80;
     const scanHealth = latestLog?.status === "warning" || latestLog?.status === "failed" || lowSuccessRate ? "warning" : "healthy";
-    const status: MonitorStatus = site.enabled === false ? "paused" : scanHealth;
+    const catalog = catalogBaseline(baselineBySite[site.id]);
+    const status: MonitorStatus = site.enabled === false ? "paused" : catalog.catalogState === "pending" ? "pending" : scanHealth === "warning" || catalog.catalogState === "warning" ? "warning" : "healthy";
 
     return {
       id: site.id,
@@ -88,14 +120,17 @@ function buildMonitorRows(data: OverviewData): MonitorRow[] {
       lastScan: relativeTime(latestLog?.started_at),
       successRate,
       scanHealth,
-      failureReason: scanFailureReason(latestLog, successRate, siteLogs.length),
+      catalogState: catalog.catalogState,
+      catalogLabel: catalog.catalogLabel,
+      catalogDetail: catalog.catalogDetail,
+      failureReason: scanHealth === "warning" ? scanFailureReason(latestLog, successRate, siteLogs.length) : catalog.catalogState === "warning" ? catalog.catalogDetail : "无异常",
       frequency: site.scan_interval_minutes ? `${site.scan_interval_minutes} 分钟` : "每 60 分钟",
     };
   });
 }
 
 function summarize(rows: MonitorRow[]) {
-  const active = rows.filter((row) => row.status !== "paused").length;
+  const active = rows.filter((row) => row.status === "healthy" || row.status === "warning").length;
   const warning = rows.filter((row) => row.status === "warning").length;
   const pausedCount = rows.filter((row) => row.status === "paused").length;
   const averageRate = rows.length ? Math.round(rows.reduce((total, row) => total + row.successRate, 0) / rows.length) : 100;
@@ -104,19 +139,29 @@ function summarize(rows: MonitorRow[]) {
 
 export function MonitorsPage() {
   const [data, setData] = useState<OverviewData | null>(null);
+  const [baselineBySite, setBaselineBySite] = useState<Record<number, SiteBaselineSummary | undefined>>({});
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<MonitorStatus | "all">("all");
   const [action, setAction] = useState<ActionState>({ id: null, kind: null, message: "", tone: "idle" });
 
-  const refresh = () => {
+  const refresh = async () => {
     setLoading(true);
-    loadOverview().then(setData).finally(() => setLoading(false));
+    try {
+      const overview = await loadOverview();
+      setData(overview);
+      const summaries = await Promise.all(overview.sites.map(async (site) => [site.id, await getSiteBaselineSummary(site.id).catch(() => undefined)] as const));
+      setBaselineBySite(Object.fromEntries(summaries));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(refresh, []);
+  useEffect(() => {
+    void refresh();
+  }, []);
 
-  const rows = useMemo(() => (data ? buildMonitorRows(data) : []), [data]);
+  const rows = useMemo(() => (data ? buildMonitorRows(data, baselineBySite) : []), [baselineBySite, data]);
   const stats = useMemo(() => summarize(rows), [rows]);
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -212,6 +257,7 @@ export function MonitorsPage() {
           <option value="all">全部状态</option>
           <option value="healthy">正常</option>
           <option value="warning">需关注</option>
+          <option value="pending">待建立基线</option>
           <option value="paused">已暂停</option>
         </select>
         {(query || statusFilter !== "all") ? <button className="button button-secondary" type="button" onClick={() => { setQuery(""); setStatusFilter("all"); }}>清除筛选</button> : null}
@@ -242,7 +288,8 @@ export function MonitorsPage() {
                   <th>状态</th>
                   <th>最近扫描</th>
                   <th>成功率</th>
-                  <th>失败原因</th>
+                  <th>商品基线</th>
+                  <th>采集说明</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -277,6 +324,7 @@ function MonitorTableRow({ row, action, onScan, onToggle, onDelete }: { row: Mon
   const toggling = action.id === row.id && action.kind === "toggle";
   const deleting = action.id === row.id && action.kind === "delete";
   const paused = row.status === "paused";
+  const statusDot = row.status === "warning" ? "warning" : row.status === "healthy" ? "success" : "";
 
   return (
     <tr>
@@ -290,9 +338,15 @@ function MonitorTableRow({ row, action, onScan, onToggle, onDelete }: { row: Mon
         </div>
       </td>
       <td><span className="tag">{row.type}</span></td>
-      <td><span className={`monitor-status ${row.status}`}><span className={`status-dot ${row.status === "warning" ? "warning" : "success"}`} />{statusText[row.status]}</span></td>
+      <td><span className={`monitor-status ${row.status}`}><span className={`status-dot ${statusDot}`} />{statusText[row.status]}</span></td>
       <td><span className="time-cell"><Clock3 size={14} />{row.lastScan}</span><span className="table-sub">{row.frequency}</span></td>
       <td><strong>{row.successRate}%</strong></td>
+      <td>
+        <Link className={`catalog-baseline ${row.catalogState}`} to={`/products?site_id=${row.id}`} title={`查看 ${row.name} 的产品库`}>
+          <strong>{row.catalogLabel}</strong>
+          <span>{row.catalogDetail}</span>
+        </Link>
+      </td>
       <td><span className={row.status === "warning" ? "failure-text warning" : "failure-text"}>{row.failureReason}</span></td>
       <td>
         <div className="monitor-actions">

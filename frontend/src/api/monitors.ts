@@ -57,6 +57,13 @@ export type ScanJob = {
   result?: { progress?: ScanProgress };
 };
 
+export type SiteBaselineSummary = {
+  site_id: number;
+  product_count: number;
+  latest_job?: ScanJob | null;
+  baseline_completed: boolean;
+};
+
 const targetToNotificationEvent: Record<string, NotificationEvent[]> = {
   "new-products": ["product_new", "variant_new"],
   price: ["price_change"],
@@ -118,6 +125,10 @@ export async function createMonitorAndStartBaseline(input: CreateMonitorTaskInpu
 
 export function getScanJob(jobId: number | string): Promise<ScanJob> {
   return getJson<ScanJob>(`/api/scan-jobs/${jobId}`);
+}
+
+export function getSiteBaselineSummary(siteId: number | string): Promise<SiteBaselineSummary> {
+  return getJson<SiteBaselineSummary>(`/api/sites/${siteId}/baseline-summary`);
 }
 
 export function resumeScanJob(jobId: number | string): Promise<ScanJob> {

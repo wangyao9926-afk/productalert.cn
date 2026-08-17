@@ -1610,7 +1610,7 @@ async def scheduler_loop() -> None:
         with get_db() as db:
             sources = fetchall(
                 db,
-                """
+                f"""
                 SELECT monitor_sources.*
                 FROM monitor_sources
                 JOIN sites ON sites.id = monitor_sources.site_id

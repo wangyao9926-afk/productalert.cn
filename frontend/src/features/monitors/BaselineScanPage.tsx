@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, ChevronLeft, CircleAlert, LoaderCircle, PackageSearch, RefreshCw, RotateCw } from "lucide-react";
+import { CheckCircle2, ChevronLeft, CircleAlert, ExternalLink, LoaderCircle, PackageSearch, RefreshCw, RotateCw } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
-import { getScanJob, resumeScanJob, type ScanJob, triggerSiteScan } from "../../api/monitors";
+import { getScanJob, getScanJobCandidates, resumeScanJob, type ScanCandidate, type ScanCandidateEvidence, type ScanJob, triggerSiteScan } from "../../api/monitors";
 
 const terminalStatuses = new Set(["success", "partial_success", "failed"]);
 
@@ -18,6 +18,7 @@ export function BaselineScanPage() {
   const navigate = useNavigate();
   const { siteId, jobId } = useParams();
   const [job, setJob] = useState<ScanJob | null>(null);
+  const [candidateEvidence, setCandidateEvidence] = useState<ScanCandidateEvidence | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retrying, setRetrying] = useState(false);
@@ -32,6 +33,12 @@ export function BaselineScanPage() {
         if (!active) return;
         setJob(nextJob);
         setError("");
+        try {
+          const nextEvidence = await getScanJobCandidates(jobId);
+          if (active) setCandidateEvidence(nextEvidence);
+        } catch {
+          if (active) setCandidateEvidence(null);
+        }
       } catch (requestError) {
         if (!active) return;
         if (requestError instanceof ApiError && requestError.status === 401) {
@@ -115,7 +122,21 @@ export function BaselineScanPage() {
           <h2>{loading ? "正在读取扫描任务…" : title}</h2>
           <p>{job?.message || "准备发现官网中的商品链接。"}</p>
         </div>
-        <button className="icon-button" type="button" onClick={() => jobId && void getScanJob(jobId).then(setJob)} aria-label="刷新扫描进度">
+        <button
+          className="icon-button"
+          type="button"
+          onClick={() => {
+            if (!jobId) return;
+            void Promise.all([getScanJob(jobId), getScanJobCandidates(jobId)])
+              .then(([nextJob, nextEvidence]) => {
+                setJob(nextJob);
+                setCandidateEvidence(nextEvidence);
+                setError("");
+              })
+              .catch(() => setError("暂时无法读取扫描进度，请稍后重试。"));
+          }}
+          aria-label="刷新扫描进度"
+        >
           <RefreshCw size={16} />
         </button>
       </section>
@@ -171,6 +192,32 @@ export function BaselineScanPage() {
         </div>
       ) : null}
 
+      {candidateEvidence ? (
+        <section className="panel baseline-candidate-evidence" aria-label="扫描候选证据">
+          <div className="baseline-candidate-heading">
+            <div>
+              <div className="panel-kicker">SCAN EVIDENCE</div>
+              <h2>需要核对的候选链接</h2>
+              <p>成功识别的商品已进入产品库；以下链接未计入产品数，可直接查看官网与失败原因。</p>
+            </div>
+            <span>已入库 {candidateEvidence.stored_count} · 待核对 {candidateEvidence.issue_count}</span>
+          </div>
+          {candidateEvidence.items.length ? (
+            <div className="baseline-candidate-list">
+              {candidateEvidence.items.map((candidate) => (
+                <a className="baseline-candidate-row" key={candidate.id} href={candidate.url} target="_blank" rel="noreferrer">
+                  <span className={`baseline-candidate-status ${candidate.status}`}>{candidateStatusLabel(candidate)}</span>
+                  <span className="baseline-candidate-url">{candidate.url}</span>
+                  <small>{candidateDetail(candidate)}</small>
+                  <ExternalLink size={15} aria-hidden="true" />
+                </a>
+              ))}
+            </div>
+          ) : <div className="baseline-candidate-empty">本次扫描没有需要人工核对的候选链接。</div>}
+          {candidateEvidence.truncated ? <small className="baseline-candidate-truncated">仅显示前 100 条待核对链接。</small> : null}
+        </section>
+      ) : null}
+
       <section className="panel baseline-next-step">
         <div>
           <div className="panel-kicker">NEXT STEP</div>
@@ -204,6 +251,26 @@ function adapterIssueLabel(attempt: { adapter: string; status: string; http_stat
   if (attempt.status === "limited") return `${adapter}：读取频率受限${attempt.http_status ? ` (${attempt.http_status})` : ""}`;
   if (attempt.status === "blocked") return `${adapter}：访问被拒绝${attempt.http_status ? ` (${attempt.http_status})` : ""}`;
   return `${adapter}：${attempt.reason || "读取失败"}${attempt.http_status ? ` (${attempt.http_status})` : ""}`;
+}
+
+function candidateStatusLabel(candidate: ScanCandidate) {
+  return ({
+    parse_failed: "未识别出商品信息",
+    non_product: "非商品页",
+    rate_limited: "官网限流",
+    blocked: "访问受限",
+    fetch_failed: "读取失败",
+    http_error: "官网返回错误",
+    timeout: "请求超时",
+    unsupported_content: "页面内容不支持",
+    pending_retry: "等待重试",
+  } as Record<string, string>)[candidate.status] || candidate.error_category || "需要核对";
+}
+
+function candidateDetail(candidate: ScanCandidate) {
+  const details = [candidate.http_status ? `HTTP ${candidate.http_status}` : null, candidate.error_category, candidate.attempt_count ? `已尝试 ${candidate.attempt_count} 次` : null];
+  if (candidate.retry_after_seconds) details.push(`约 ${Math.ceil(candidate.retry_after_seconds / 60)} 分钟后重试`);
+  return details.filter(Boolean).join(" · ") || "等待下一次扫描确认";
 }
 
 function Metric({ label, value, detail, tone = "default" }: { label: string; value: number | string; detail: string; tone?: "default" | "warning" | "success" }) {

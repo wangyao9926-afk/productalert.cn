@@ -100,6 +100,46 @@ class BaselineProductApiTests(unittest.TestCase):
                     "result": json_dumps({"progress": {"baseline_completed": True, "product_count": 1}}),
                 },
             )
+            self.source_job_id = insert_row(
+                db,
+                "scan_jobs",
+                {
+                    "parent_job_id": self.job_id,
+                    "site_id": self.site_id,
+                    "source_id": source_id,
+                    "job_type": "source_scan",
+                    "trigger_type": "baseline",
+                    "status": "partial_success",
+                },
+            )
+            insert_row(
+                db,
+                "scan_job_candidates",
+                {
+                    "job_id": self.source_job_id,
+                    "site_id": self.site_id,
+                    "source_id": source_id,
+                    "url": self.product_url,
+                    "canonical_key": "baseline-products/waterproof-bag",
+                    "status": "stored",
+                    "http_status": 200,
+                },
+            )
+            self.failed_candidate_url = f"https://baseline-products-{marker}.example.com/products/not-parsed"
+            insert_row(
+                db,
+                "scan_job_candidates",
+                {
+                    "job_id": self.source_job_id,
+                    "site_id": self.site_id,
+                    "source_id": source_id,
+                    "url": self.failed_candidate_url,
+                    "canonical_key": "baseline-products/not-parsed",
+                    "status": "parse_failed",
+                    "http_status": 200,
+                    "error_category": "parse_failed",
+                },
+            )
 
     def tearDown(self) -> None:
         with get_db() as db:
@@ -166,6 +206,20 @@ class BaselineProductApiTests(unittest.TestCase):
         response = self.other_client.get(f"/api/sites/{self.site_id}/baseline-summary", headers=self.other_headers)
 
         self.assertEqual(response.status_code, 404, response.text)
+
+    def test_owner_can_read_issue_candidates_from_site_baseline(self) -> None:
+        response = self.client.get(f"/api/scan-jobs/{self.job_id}/candidates", headers=self.owner_headers)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["job_id"], self.job_id)
+        self.assertEqual(payload["stored_count"], 1)
+        self.assertEqual(payload["issue_count"], 1)
+        self.assertEqual(payload["items"][0]["url"], self.failed_candidate_url)
+        self.assertEqual(payload["items"][0]["status"], "parse_failed")
+
+        forbidden = self.other_client.get(f"/api/scan-jobs/{self.job_id}/candidates", headers=self.other_headers)
+        self.assertEqual(forbidden.status_code, 404, forbidden.text)
 
 
 if __name__ == "__main__":

@@ -57,6 +57,27 @@ export type ScanJob = {
   result?: { progress?: ScanProgress };
 };
 
+export type ScanCandidate = {
+  id: number;
+  job_id: number;
+  source_id?: number | null;
+  url: string;
+  status: string;
+  http_status?: number | null;
+  error_category?: string | null;
+  retry_after_seconds?: number | null;
+  attempt_count?: number | null;
+  updated_at?: string | null;
+};
+
+export type ScanCandidateEvidence = {
+  job_id: number;
+  stored_count: number;
+  issue_count: number;
+  truncated: boolean;
+  items: ScanCandidate[];
+};
+
 export type SiteBaselineSummary = {
   site_id: number;
   product_count: number;
@@ -125,6 +146,10 @@ export async function createMonitorAndStartBaseline(input: CreateMonitorTaskInpu
 
 export function getScanJob(jobId: number | string): Promise<ScanJob> {
   return getJson<ScanJob>(`/api/scan-jobs/${jobId}`);
+}
+
+export function getScanJobCandidates(jobId: number | string): Promise<ScanCandidateEvidence> {
+  return getJson<ScanCandidateEvidence>(`/api/scan-jobs/${jobId}/candidates`);
 }
 
 export function getSiteBaselineSummary(siteId: number | string): Promise<SiteBaselineSummary> {

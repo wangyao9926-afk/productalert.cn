@@ -129,6 +129,12 @@ for (const text of ["catalog_reference_count", "coverage_state", "discovery_sour
 for (const text of ["catalog_reference_count", "coverage_state", "discovery_source_counts", "adapter_attempts"]) {
   assert(monitorApi.includes(text), `Monitor API types must expose catalog coverage field: ${text}`);
 }
+for (const text of ["ScanCandidateEvidence", "getScanJobCandidates", "/api/scan-jobs/${jobId}/candidates"]) {
+  assert(monitorApi.includes(text), `Monitor API client must expose scan-candidate evidence: ${text}`);
+}
+for (const text of ["getScanJobCandidates", "需要核对的候选链接", "candidateStatusLabel", "candidateEvidence", "官网返回错误", "请求超时", "页面内容不支持"]) {
+  assert(baselineScanPage.includes(text), `Baseline Scan Page must show scan-candidate evidence: ${text}`);
+}
 const createMonitorPage = read("src/features/monitors/CreateMonitorPage.tsx");
 assert(createMonitorPage.includes("createMonitorAndStartBaseline"), "Create Monitor Page must start the baseline scan");
 assert(createMonitorPage.includes("/baseline/"), "Create Monitor Page must navigate to baseline progress");

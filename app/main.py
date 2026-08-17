@@ -1221,6 +1221,58 @@ async def get_scan_job(job_id: int, user: dict = CurrentUser) -> dict:
     return row_to_dict(row)
 
 
+@app.get("/api/scan-jobs/{job_id}/candidates")
+async def get_scan_job_candidates(job_id: int, user: dict = CurrentUser) -> dict:
+    """Return candidate evidence for one baseline scan without exposing another user's jobs."""
+    with get_db() as db:
+        requested_job = fetchone(
+            db,
+            """
+            SELECT scan_jobs.*
+            FROM scan_jobs
+            JOIN sites ON sites.id = scan_jobs.site_id
+            WHERE scan_jobs.id = ? AND sites.user_id = ?
+            """,
+            (job_id, user["id"]),
+        )
+        if not requested_job:
+            raise HTTPException(status_code=404, detail="Scan job not found")
+
+        root_job_id = requested_job["parent_job_id"] or requested_job["id"]
+        rows = fetchall(
+            db,
+            """
+            SELECT
+                scan_job_candidates.id,
+                scan_job_candidates.job_id,
+                scan_job_candidates.source_id,
+                scan_job_candidates.url,
+                scan_job_candidates.status,
+                scan_job_candidates.http_status,
+                scan_job_candidates.error_category,
+                scan_job_candidates.retry_after_seconds,
+                scan_job_candidates.attempt_count,
+                scan_job_candidates.updated_at
+            FROM scan_job_candidates
+            JOIN scan_jobs ON scan_jobs.id = scan_job_candidates.job_id
+            WHERE scan_jobs.site_id = ?
+              AND (scan_job_candidates.job_id = ? OR scan_jobs.parent_job_id = ?)
+            ORDER BY scan_job_candidates.updated_at DESC, scan_job_candidates.id DESC
+            """,
+            (requested_job["site_id"], root_job_id, root_job_id),
+        )
+
+    candidates = [row_to_dict(row) for row in rows]
+    issues = [candidate for candidate in candidates if candidate.get("status") != "stored"]
+    return {
+        "job_id": root_job_id,
+        "stored_count": sum(1 for candidate in candidates if candidate.get("status") == "stored"),
+        "issue_count": len(issues),
+        "truncated": len(issues) > 100,
+        "items": issues[:100],
+    }
+
+
 @app.post("/api/scan-jobs/{job_id}/resume")
 async def resume_scan_job(job_id: int, user: dict = CurrentUser) -> dict:
     with get_db() as db:

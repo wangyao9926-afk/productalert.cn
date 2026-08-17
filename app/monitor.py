@@ -830,6 +830,32 @@ def refresh_product_match_groups(db, product_id: int) -> None:
             insert_ignore(db, "product_match_members", ["group_id", "product_id"], (group_id, member["product_id"]))
 
 
+def find_existing_product_by_identifiers(db, site_id: int, product):
+    """Find a product that survived a URL change using its strongest extracted IDs."""
+    for identifier_type in ("platform_product_id", "gtin", "sku"):
+        values = sorted({identifier.value for identifier in product.identifiers if identifier.kind == identifier_type and identifier.value})
+        if not values:
+            continue
+        placeholders = ", ".join("?" for _ in values)
+        row = fetchone(
+            db,
+            f"""
+            SELECT products.*
+            FROM products
+            JOIN product_identifiers ON product_identifiers.product_id = products.id
+            WHERE products.site_id = ?
+              AND product_identifiers.identifier_type = ?
+              AND product_identifiers.normalized_value IN ({placeholders})
+            ORDER BY products.id
+            LIMIT 1
+            """,
+            (site_id, identifier_type, *values),
+        )
+        if row:
+            return row
+    return None
+
+
 async def extract_and_store_product(
     candidate,
     source_data: dict,
@@ -861,6 +887,8 @@ async def extract_and_store_product(
             "SELECT * FROM products WHERE site_id = ? AND url = ?",
             (source_data["site_id"], product_url),
         )
+        if not exists:
+            exists = find_existing_product_by_identifiers(db, source_data["site_id"], product)
         if exists:
             if record_changes:
                 record_product_update_events(db, exists, product, event_source_data, source_id)
@@ -870,6 +898,7 @@ async def extract_and_store_product(
                 exists["id"],
                 {
                     "source_id": exists["source_id"] or source_id,
+                    "url": product_url,
                     "title": product.title,
                     "description": product.description,
                     "image_url": product.image_url,

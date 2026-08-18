@@ -5,6 +5,7 @@ import unittest
 from uuid import uuid4
 from unittest.mock import AsyncMock, patch
 
+from app import crawler
 from app.crawler import CatalogDiscoveryResult, ExtractedProduct, ProductCandidate, ProductFetchError, classify_product_url, discover_product_candidates, fetch_result_from_response, jsonld_item_list_candidates, matches_catalog_candidate_rules, merge_catalog_candidates, product_from_woocommerce_payload, raise_for_fetch_failure, shopify_product_candidates, woocommerce_product_candidates_from_payload
 from app.db import execute_sql, fetchall, fetchone, get_db, init_db, insert_row, json_dumps, row_to_dict
 from app.db_sqlite_maintenance import migrate_product_classification
@@ -166,6 +167,45 @@ class CatalogDiscoveryTests(unittest.TestCase):
         )
 
         self.assertEqual([candidate.url for candidate in candidates], ["https://store.example.com/products/pump"])
+
+
+    def test_discovers_product_urls_from_a_nested_sitemap_index(self) -> None:
+        root_sitemap = "https://store.example.com/sitemap.xml"
+        locale_index = "https://store.example.com/sitemaps/en.xml"
+        product_sitemap = "https://store.example.com/sitemaps/products-1.xml"
+        documents = {
+            root_sitemap: f"""
+                <sitemapindex>
+                  <sitemap><loc>{locale_index}</loc></sitemap>
+                </sitemapindex>
+            """,
+            locale_index: f"""
+                <sitemapindex>
+                  <sitemap><loc>{product_sitemap}</loc></sitemap>
+                </sitemapindex>
+            """,
+            product_sitemap: """
+                <urlset>
+                  <url><loc>https://store.example.com/products/quiet-pump</loc></url>
+                </urlset>
+            """,
+        }
+
+        with patch("app.crawler.fetch_text", new=AsyncMock(side_effect=lambda _client, url: documents.get(url))):
+            candidates = asyncio.run(
+                crawler.discover_sitemap_candidates(
+                    object(),
+                    "https://store.example.com/",
+                    root_sitemap,
+                )
+            )
+
+        self.assertEqual([candidate.url for candidate in candidates], [
+            locale_index,
+            product_sitemap,
+            "https://store.example.com/products/quiet-pump",
+        ])
+        self.assertEqual(candidates[-1].discovery_sources, ("product_sitemap",))
 
     def test_fetch_result_records_retry_after_for_rate_limit(self) -> None:
         result = fetch_result_from_response(

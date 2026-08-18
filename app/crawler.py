@@ -546,6 +546,50 @@ def with_discovery_source(candidates: Iterable[ProductCandidate], source: str) -
     ]
 
 
+async def discover_sitemap_candidates(
+    client: httpx.AsyncClient,
+    source_url: str,
+    sitemap_url: str,
+    *,
+    max_documents: int = 30,
+    max_depth: int = 3,
+) -> list[ProductCandidate]:
+    """Fetch a bounded sitemap tree so nested catalog indexes are not skipped."""
+    candidates: list[ProductCandidate] = []
+    queued: list[tuple[str, int]] = [(sitemap_url, 0)]
+    visited: set[str] = set()
+
+    while queued and len(visited) < max_documents:
+        current_url, depth = queued.pop(0)
+        normalized_url = normalize_url(current_url)
+        if normalized_url in visited or not same_domain(source_url, normalized_url):
+            continue
+        visited.add(normalized_url)
+
+        sitemap_text = await fetch_text(client, normalized_url)
+        if not sitemap_text:
+            continue
+
+        source = "product_sitemap" if "product" in urlparse(normalized_url).path.lower() else "sitemap"
+        sitemap_candidates = with_discovery_source(xml_candidates(sitemap_text, normalized_url), source)
+        candidates.extend(sitemap_candidates)
+
+        if depth >= max_depth:
+            continue
+        child_sitemaps = [
+            candidate
+            for candidate in sitemap_candidates
+            if same_domain(source_url, candidate.url) and looks_like_sitemap(candidate.url)
+        ]
+        queued.extend(
+            (candidate.url, depth + 1)
+            for candidate in sorted(child_sitemaps, key=sitemap_priority)
+            if normalize_url(candidate.url) not in visited
+        )
+
+    return candidates
+
+
 def candidate_is_confirmed_product(candidate: ProductCandidate) -> bool:
     kind = (candidate.payload or {}).get("kind")
     return kind in {"shopify_product", "woocommerce_product", "jsonld_product"} or classify_product_url(candidate.url)[0] == "product_detail"
@@ -704,16 +748,7 @@ async def discover_catalog(
             reference_counts.append(woocommerce_reference)
 
         if use_sitemap:
-            sitemap = await fetch_text(client, sitemap_url)
-            if sitemap:
-                sitemap_candidates = xml_candidates(sitemap, source_url)
-                candidates.extend(with_discovery_source(sitemap_candidates, "sitemap"))
-                child_sitemaps = [candidate for candidate in sitemap_candidates if same_domain(source_url, candidate.url) and looks_like_sitemap(candidate.url)]
-                for child in sorted(child_sitemaps, key=sitemap_priority)[:10]:
-                    child_text = await fetch_text(client, child.url)
-                    if child_text:
-                        source = "product_sitemap" if "product" in child.url.lower() else "sitemap"
-                        candidates.extend(with_discovery_source(xml_candidates(child_text, child.url), source))
+            candidates.extend(await discover_sitemap_candidates(client, source_url, sitemap_url))
 
         page = await fetch_text(client, source_url)
         if page:

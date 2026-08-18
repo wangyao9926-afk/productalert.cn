@@ -207,6 +207,39 @@ class CatalogDiscoveryTests(unittest.TestCase):
         ])
         self.assertEqual(candidates[-1].discovery_sources, ("product_sitemap",))
 
+    def test_discovers_products_on_the_second_page_of_a_collection(self) -> None:
+        collection_url = "https://store.example.com/collections/new"
+        second_page_url = "https://store.example.com/collections/new?page=2"
+        documents = {
+            collection_url: """
+                <html><body>
+                  <a href="/products/first-pump">First Pump</a>
+                  <a rel="next" href="/collections/new?page=2">Next</a>
+                </body></html>
+            """,
+            second_page_url: """
+                <html><body>
+                  <a href="/products/second-pump">Second Pump</a>
+                </body></html>
+            """,
+        }
+
+        with patch("app.crawler.fetch_text", new=AsyncMock(side_effect=lambda _client, url: documents.get(url))):
+            candidates = asyncio.run(
+                crawler.discover_collection_candidates(
+                    object(),
+                    "https://store.example.com/",
+                    [ProductCandidate(collection_url)],
+                )
+            )
+
+        product_urls = [candidate.url for candidate in candidates if classify_product_url(candidate.url)[0] == "product_detail"]
+        self.assertEqual(product_urls, [
+            "https://store.example.com/products/first-pump",
+            "https://store.example.com/products/second-pump",
+        ])
+        self.assertTrue(all(candidate.discovery_sources == ("collection_page",) for candidate in candidates if candidate.url in product_urls))
+
     def test_fetch_result_records_retry_after_for_rate_limit(self) -> None:
         result = fetch_result_from_response(
             "https://store.example.com/products/pump",

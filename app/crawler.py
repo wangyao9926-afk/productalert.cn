@@ -590,6 +590,66 @@ async def discover_sitemap_candidates(
     return candidates
 
 
+def collection_next_page_url(html: str, base_url: str) -> str | None:
+    soup = BeautifulSoup(html, "lxml")
+    next_markers = ("next", "下一页", "下页", "下一頁", "›", "→")
+    for anchor in soup.find_all("a", href=True):
+        rel = " ".join(anchor.get("rel") or [])
+        label = " ".join(
+            value
+            for value in (
+                anchor.get_text(" ", strip=True),
+                anchor.get("aria-label", ""),
+                anchor.get("title", ""),
+                rel,
+            )
+            if value
+        ).lower()
+        if not ("next" in rel.lower() or any(marker in label for marker in next_markers)):
+            continue
+        candidate_url = urljoin(base_url, anchor["href"])
+        if same_domain(base_url, candidate_url) and classify_product_url(candidate_url)[0] == "collection_page":
+            return candidate_url
+    return None
+
+
+async def discover_collection_candidates(
+    client: httpx.AsyncClient,
+    source_url: str,
+    seed_candidates: Iterable[ProductCandidate],
+    *,
+    max_pages: int = 30,
+) -> list[ProductCandidate]:
+    """Discover product links from bounded collection-page pagination."""
+    collection_urls = [
+        candidate.url
+        for candidate in sorted(seed_candidates, key=candidate_priority)
+        if same_domain(source_url, candidate.url)
+        and classify_product_url(candidate.url)[0] == "collection_page"
+    ]
+    queued = [(url, 0) for url in dict.fromkeys(collection_urls)]
+    visited: set[str] = set()
+    candidates: list[ProductCandidate] = []
+
+    while queued and len(visited) < max_pages:
+        current_url, page_number = queued.pop(0)
+        normalized_url = normalize_url(current_url)
+        if normalized_url in visited:
+            continue
+        visited.add(normalized_url)
+
+        page = await fetch_text(client, normalized_url)
+        if not page:
+            continue
+        candidates.extend(with_discovery_source(html_candidates(page, normalized_url), "collection_page"))
+
+        next_page = collection_next_page_url(page, normalized_url)
+        if next_page and page_number + 1 < max_pages and normalize_url(next_page) not in visited:
+            queued.append((next_page, page_number + 1))
+
+    return candidates
+
+
 def candidate_is_confirmed_product(candidate: ProductCandidate) -> bool:
     kind = (candidate.payload or {}).get("kind")
     return kind in {"shopify_product", "woocommerce_product", "jsonld_product"} or classify_product_url(candidate.url)[0] == "product_detail"
@@ -756,8 +816,11 @@ async def discover_catalog(
             if "<?xml" in lowered or "<rss" in lowered or "<urlset" in lowered or "<feed" in lowered:
                 candidates.extend(with_discovery_source(xml_candidates(page, source_url), "sitemap"))
             else:
-                candidates.extend(with_discovery_source(html_candidates(page, source_url, selector), "html_links"))
+                page_candidates = html_candidates(page, source_url, selector)
+                candidates.extend(with_discovery_source(page_candidates, "html_links"))
                 candidates.extend(jsonld_item_list_candidates(page, source_url))
+                collection_seeds = [ProductCandidate(source_url), *page_candidates]
+                candidates.extend(await discover_collection_candidates(client, source_url, collection_seeds))
 
     filtered = [
         candidate

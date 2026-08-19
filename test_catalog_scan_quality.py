@@ -207,6 +207,46 @@ class CatalogDiscoveryTests(unittest.TestCase):
         ])
         self.assertEqual(candidates[-1].discovery_sources, ("product_sitemap",))
 
+    def test_reads_same_domain_sitemaps_declared_in_robots_txt(self) -> None:
+        sitemap_urls = crawler.sitemap_urls_from_robots(
+            """
+                User-agent: *
+                Sitemap: /sitemaps/catalog.xml
+                sitemap: https://store.example.com/sitemaps/products.xml
+                Sitemap: https://cdn.example.net/catalog.xml
+            """,
+            "https://store.example.com/collections/new",
+        )
+
+        self.assertEqual(sitemap_urls, [
+            "https://store.example.com/sitemaps/catalog.xml",
+            "https://store.example.com/sitemaps/products.xml",
+        ])
+
+    def test_catalog_discovery_uses_the_sitemap_declared_in_robots_txt(self) -> None:
+        source_url = "https://store.example.com/"
+        robots_url = "https://store.example.com/robots.txt"
+        custom_sitemap = "https://store.example.com/sitemaps/products.xml"
+        documents = {
+            robots_url: f"Sitemap: {custom_sitemap}",
+            custom_sitemap: """
+                <urlset>
+                  <url><loc>https://store.example.com/products/quiet-pump</loc></url>
+                </urlset>
+            """,
+        }
+
+        with (
+            patch("app.crawler.shopify_catalog_discovery", new=AsyncMock(return_value=([], None, {"adapter": "shopify", "status": "not_applicable"}))),
+            patch("app.crawler.woocommerce_catalog_discovery", new=AsyncMock(return_value=([], None, {"adapter": "woocommerce", "status": "not_applicable"}))),
+            patch("app.crawler.fetch_text", new=AsyncMock(side_effect=lambda _client, url: documents.get(url))),
+            patch("app.crawler.rendered_candidates", new=AsyncMock(return_value=[])),
+        ):
+            discovery = asyncio.run(crawler.discover_catalog(source_url))
+
+        self.assertEqual([candidate.url for candidate in discovery.candidates], ["https://store.example.com/products/quiet-pump"])
+        self.assertEqual(discovery.discovery_source_counts, {"product_sitemap": 1})
+
     def test_discovers_products_on_the_second_page_of_a_collection(self) -> None:
         collection_url = "https://store.example.com/collections/new"
         second_page_url = "https://store.example.com/collections/new?page=2"

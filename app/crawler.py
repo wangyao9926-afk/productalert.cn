@@ -479,6 +479,24 @@ def sitemap_priority(candidate: ProductCandidate) -> tuple[int, int, str]:
     return (2, locale_rank, url)
 
 
+def sitemap_urls_from_robots(robots_text: str, source_url: str) -> list[str]:
+    parsed = urlparse(source_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}/"
+    sitemap_urls: list[str] = []
+    for line in robots_text.splitlines():
+        key, separator, value = line.partition(":")
+        if not separator or key.strip().lower() != "sitemap":
+            continue
+        candidate_url = urljoin(origin, value.strip())
+        candidate_parsed = urlparse(candidate_url)
+        if candidate_parsed.scheme not in {"http", "https"} or not same_domain(source_url, candidate_url):
+            continue
+        normalized_url = normalize_url(candidate_url)
+        if normalized_url not in sitemap_urls:
+            sitemap_urls.append(normalized_url)
+    return sitemap_urls
+
+
 def locale_priority(url: str) -> int:
     segments = [segment for segment in urlparse(url).path.lower().split("/") if segment]
     if not segments:
@@ -788,6 +806,7 @@ async def discover_catalog(
     source_url = normalize_url(source_url)
     parsed = urlparse(source_url)
     sitemap_url = f"{parsed.scheme}://{parsed.netloc}/sitemap.xml"
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
     include = include_keywords or []
     exclude = exclude_keywords or []
     candidates: list[ProductCandidate] = []
@@ -808,7 +827,10 @@ async def discover_catalog(
             reference_counts.append(woocommerce_reference)
 
         if use_sitemap:
-            candidates.extend(await discover_sitemap_candidates(client, source_url, sitemap_url))
+            robots_text = await fetch_text(client, robots_url)
+            declared_sitemaps = sitemap_urls_from_robots(robots_text, source_url) if robots_text else []
+            for candidate_sitemap in dict.fromkeys([*declared_sitemaps, sitemap_url]):
+                candidates.extend(await discover_sitemap_candidates(client, source_url, candidate_sitemap))
 
         page = await fetch_text(client, source_url)
         if page:

@@ -168,6 +168,10 @@ for (const text of ["loadProducts", "/api/products", "ProductDetailContext"]) {
   assert(productsApi.includes(text), `Products API client is missing required text: ${text}`);
 }
 
+const overviewApi = read("src/api/overview.ts");
+assert(!overviewApi.includes("import.meta.env.DEV ||"), "Local development must not silently replace unavailable API data with demo brands");
+assert(overviewApi.includes('const demoFallbackEnabled = import.meta.env.VITE_ENABLE_DEMO_FALLBACK === "true";'), "Demo data must require explicit opt-in");
+
 const inbox = read("src/features/inbox/InboxPage.tsx");
 for (const text of ["情报收件箱", "新品上新", "价格变化", "库存变化", "信息变化", "标记已处理", "标记误报", "重点关注", "批量处理", "导出 CSV", "严重程度", "操作成功", "请先登录"]) {
   assert(inbox.includes(text), `Intelligence Inbox is missing required text: ${text}`);

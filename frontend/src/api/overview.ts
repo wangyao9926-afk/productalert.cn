@@ -42,7 +42,7 @@ const demo: OverviewData = {
   message: "API 不可用，当前显示演示数据。",
 };
 
-const demoFallbackEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEMO_FALLBACK === "true";
+const demoFallbackEnabled = import.meta.env.VITE_ENABLE_DEMO_FALLBACK === "true";
 
 function demoWith(reason: OverviewReason, message: string): OverviewData {
   return { ...demo, reason, message };

@@ -11,6 +11,7 @@ from app.db import execute_sql, fetchall, fetchone, get_db, init_db, insert_row,
 from app.db_sqlite_maintenance import migrate_product_classification
 from app.monitor import create_scan_job, record_scan_candidate, scan_site
 from app.rate_limit import domain_cooldown_remaining, record_domain_rate_limit, record_domain_success, reset_domain_rate_limits
+from app.render_worker import RenderedPage
 
 
 class CatalogDiscoveryTests(unittest.TestCase):
@@ -279,6 +280,30 @@ class CatalogDiscoveryTests(unittest.TestCase):
             "https://store.example.com/products/second-pump",
         ])
         self.assertTrue(all(candidate.discovery_sources == ("collection_page",) for candidate in candidates if candidate.url in product_urls))
+
+    def test_renders_a_collection_when_static_html_has_no_product_links(self) -> None:
+        collection_url = "https://store.example.com/collections/new"
+        rendered = RenderedPage(
+            url=collection_url,
+            html='<html><body><a href="/products/dynamic-pump">Dynamic Pump</a></body></html>',
+            text="Dynamic Pump",
+        )
+
+        with (
+            patch("app.crawler.fetch_text", new=AsyncMock(return_value="<html><body><div id=app></div></body></html>")),
+            patch("app.crawler.try_render_page", new=AsyncMock(return_value=rendered)) as render_page,
+        ):
+            candidates = asyncio.run(
+                crawler.discover_collection_candidates(
+                    object(),
+                    "https://store.example.com/",
+                    [ProductCandidate(collection_url)],
+                )
+            )
+
+        self.assertEqual([candidate.url for candidate in candidates], ["https://store.example.com/products/dynamic-pump"])
+        self.assertEqual(candidates[0].discovery_sources, ("browser_render_collection",))
+        render_page.assert_awaited_once_with(collection_url)
 
     def test_fetch_result_records_retry_after_for_rate_limit(self) -> None:
         result = fetch_result_from_response(

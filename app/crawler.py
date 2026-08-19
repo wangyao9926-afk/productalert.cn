@@ -637,6 +637,7 @@ async def discover_collection_candidates(
     seed_candidates: Iterable[ProductCandidate],
     *,
     max_pages: int = 30,
+    max_rendered_pages: int = 3,
 ) -> list[ProductCandidate]:
     """Discover product links from bounded collection-page pagination."""
     collection_urls = [
@@ -648,6 +649,7 @@ async def discover_collection_candidates(
     queued = [(url, 0) for url in dict.fromkeys(collection_urls)]
     visited: set[str] = set()
     candidates: list[ProductCandidate] = []
+    rendered_pages = 0
 
     while queued and len(visited) < max_pages:
         current_url, page_number = queued.pop(0)
@@ -659,9 +661,26 @@ async def discover_collection_candidates(
         page = await fetch_text(client, normalized_url)
         if not page:
             continue
-        candidates.extend(with_discovery_source(html_candidates(page, normalized_url), "collection_page"))
 
-        next_page = collection_next_page_url(page, normalized_url)
+        page_candidates = html_candidates(page, normalized_url)
+        discovery_source = "collection_page"
+        page_for_pagination = page
+        page_url_for_pagination = normalized_url
+        if not any(candidate_is_confirmed_product(candidate) for candidate in page_candidates) and rendered_pages < max_rendered_pages:
+            rendered_pages += 1
+            rendered = await try_render_page(normalized_url)
+            if rendered and rendered.html:
+                rendered_url = normalize_url(rendered.url or normalized_url)
+                rendered_page_candidates = html_candidates(rendered.html, rendered_url)
+                if any(candidate_is_confirmed_product(candidate) for candidate in rendered_page_candidates):
+                    page_candidates = rendered_page_candidates
+                    discovery_source = "browser_render_collection"
+                    page_for_pagination = rendered.html
+                    page_url_for_pagination = rendered_url
+
+        candidates.extend(with_discovery_source(page_candidates, discovery_source))
+
+        next_page = collection_next_page_url(page_for_pagination, page_url_for_pagination)
         if next_page and page_number + 1 < max_pages and normalize_url(next_page) not in visited:
             queued.append((next_page, page_number + 1))
 

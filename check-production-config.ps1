@@ -6,6 +6,10 @@ param(
     [string]$StartBackgroundWorkers = "",
     [string]$StartNotificationWorker = "",
     [string]$SessionCookieSecure = "",
+    [string]$AppEnv = "",
+    [string]$AppPublicUrl = "",
+    [string]$CorsAllowedOrigins = "",
+    [string]$SessionCookieSameSite = "",
     [switch]$AllowInsecureCookies
 )
 
@@ -73,6 +77,10 @@ $QueueBackend = Config-Value "QUEUE_BACKEND" $QueueBackend
 $StartBackgroundWorkers = Config-Value "START_BACKGROUND_WORKERS" $StartBackgroundWorkers
 $StartNotificationWorker = Config-Value "START_NOTIFICATION_WORKER" $StartNotificationWorker
 $SessionCookieSecure = Config-Value "SESSION_COOKIE_SECURE" $SessionCookieSecure
+$AppEnv = Config-Value "APP_ENV" $AppEnv
+$AppPublicUrl = Config-Value "APP_PUBLIC_URL" $AppPublicUrl
+$CorsAllowedOrigins = Config-Value "CORS_ALLOWED_ORIGINS" $CorsAllowedOrigins
+$SessionCookieSameSite = Config-Value "SESSION_COOKIE_SAMESITE" $SessionCookieSameSite
 
 Write-Host "Production config check:" -ForegroundColor Cyan
 Write-Host "  EnvPath=$EnvPath"
@@ -124,6 +132,32 @@ if ($SessionCookieSecure -ne "true") {
     }
 } else {
     Add-Ok "SESSION_COOKIE_SECURE=true"
+}
+
+if ($AppEnv -ne "production") {
+    Add-Failure "APP_ENV must be production"
+} else {
+    Add-Ok "APP_ENV=production"
+}
+
+if ($AppPublicUrl -notmatch "^https://[^/]+$") {
+    Add-Failure "APP_PUBLIC_URL must be the public HTTPS API origin"
+} else {
+    Add-Ok "APP_PUBLIC_URL configured"
+}
+
+if (-not $CorsAllowedOrigins) {
+    Add-Failure "CORS_ALLOWED_ORIGINS must list the deployed frontend origin"
+} elseif ($CorsAllowedOrigins.Split(",") | Where-Object { $_.Trim() -notmatch "^https://[^/]+$" }) {
+    Add-Failure "CORS_ALLOWED_ORIGINS entries must be HTTPS origins without paths"
+} else {
+    Add-Ok "CORS_ALLOWED_ORIGINS configured"
+}
+
+if ($SessionCookieSameSite -ne "none") {
+    Add-Failure "SESSION_COOKIE_SAMESITE must be none for a separately hosted frontend"
+} else {
+    Add-Ok "SESSION_COOKIE_SAMESITE=none"
 }
 
 Write-Host "Production config summary: failures=$Failures warnings=$Warnings" -ForegroundColor Cyan

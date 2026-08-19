@@ -10,7 +10,7 @@ class NotificationRulesUiTests(unittest.TestCase):
         page_source = Path("frontend/src/features/notifications/NotificationsPage.tsx").read_text(encoding="utf-8")
 
         self.assertIn("createNotificationRule", api_source)
-        self.assertIn("新建推送规则", page_source)
+        self.assertIn("新建通知规则", page_source)
         self.assertIn("企业微信", page_source)
         self.assertIn("飞书", page_source)
 

@@ -24,6 +24,10 @@ class RecordingQueue:
         return None
 
 
+class RecordingRqQueue(RecordingQueue):
+    name = "rq"
+
+
 class ScanQueueRecoveryTests(unittest.TestCase):
     def test_requeues_only_pending_tasks_after_in_process_restart(self) -> None:
         init_db()
@@ -95,6 +99,40 @@ class ScanQueueRecoveryTests(unittest.TestCase):
                     ),
                 ],
             )
+        finally:
+            with get_db() as db:
+                execute_sql(db, "DELETE FROM users WHERE email = ?", (email,))
+
+    def test_requeues_persisted_tasks_when_rq_worker_restarts(self) -> None:
+        init_db()
+        marker = uuid4().hex
+        email = f"rq-queue-recovery-{marker}@monitor.internal"
+        with get_db() as db:
+            user_id = insert_row(db, "users", {"email": email, "password_hash": "not-used"})
+            site_id = insert_row(
+                db,
+                "sites",
+                {
+                    "user_id": user_id,
+                    "name": "RQ Queue recovery site",
+                    "url": f"https://rq-queue-recovery-{marker}.example.com",
+                    "scan_interval_minutes": 60,
+                    "notification_events": json_dumps(["product_new"]),
+                },
+            )
+            queued_job = insert_row(
+                db,
+                "scan_jobs",
+                {"site_id": site_id, "job_type": "site_scan", "trigger_type": "scheduled", "status": "queued"},
+            )
+
+        try:
+            queue = RecordingRqQueue()
+            restored = asyncio.run(recover_queued_scan_tasks(queue))
+
+            self.assertEqual(restored, 1)
+            self.assertEqual(queue.tasks[0].job_id, queued_job)
+            self.assertEqual(queue.tasks[0].trigger_type, "scheduled")
         finally:
             with get_db() as db:
                 execute_sql(db, "DELETE FROM users WHERE email = ?", (email,))

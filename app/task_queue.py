@@ -96,10 +96,13 @@ def queue_backend_name() -> str:
 
 
 async def recover_queued_scan_tasks(queue: ScanQueueBackend | None = None) -> int:
-    """Restore persisted tasks after an in-process worker restart."""
+    """Restore persisted queued jobs after a worker restart.
+
+    RQ job payloads can disappear when Redis is restarted. Re-enqueueing the
+    durable database rows is safe because ``claim_scan_job`` lets only one
+    delivery transition a job from queued to running.
+    """
     target_queue = queue or scan_queue_backend
-    if target_queue.name != "in_process":
-        return 0
     with get_db() as db:
         jobs = db.execute(
             """

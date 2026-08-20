@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable
 from json import dumps
+from json import loads as json_loads
 from pathlib import Path
 
 
@@ -14,6 +15,12 @@ BUSINESS_TABLES = (
     "product_variants",
     "product_identifiers",
 )
+JSON_STORAGE_COLUMNS = {
+    "notification_events_json": "notification_events",
+    "field_confidence_json": "field_confidence",
+    "confidence_reasons_json": "confidence_reasons",
+    "features_json": "features",
+}
 
 
 def _table_exists(db: sqlite3.Connection, table: str) -> bool:
@@ -26,7 +33,15 @@ def _table_exists(db: sqlite3.Connection, table: str) -> bool:
 
 
 def _rows(db: sqlite3.Connection, sql: str, params: Iterable[object] = ()) -> list[dict]:
-    return [dict(row) for row in db.execute(sql, tuple(params)).fetchall()]
+    rows = []
+    for row in db.execute(sql, tuple(params)).fetchall():
+        data = dict(row)
+        for storage_column, logical_column in JSON_STORAGE_COLUMNS.items():
+            if storage_column in data:
+                raw_value = data.pop(storage_column)
+                data[logical_column] = json_loads(raw_value) if raw_value else None
+        rows.append(data)
+    return rows
 
 
 def _empty_package() -> dict:

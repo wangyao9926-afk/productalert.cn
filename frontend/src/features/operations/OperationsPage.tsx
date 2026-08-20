@@ -64,6 +64,13 @@ function workerStatus(health: SystemHealth) {
   return health.background_workers_enabled ? "后台 worker 已启用" : "后台 worker 未启用";
 }
 
+function schedulerStatus(health: SystemHealth) {
+  const scheduler = health.scheduler;
+  if (!scheduler?.required) return "当前环境不需要调度器";
+  if (!scheduler.last_seen_at) return "尚未收到心跳";
+  return scheduler.healthy ? `正常 · ${relativeTime(scheduler.last_seen_at)}` : `心跳超时 · ${relativeTime(scheduler.last_seen_at)}`;
+}
+
 function notificationWorkerStatus(health: SystemHealth) {
   return health.notification_worker_enabled ? "通知 worker 已启用" : "通知 worker 未启用";
 }
@@ -224,7 +231,8 @@ export function OperationsPage() {
             <span className="tag">workerStatus</span>
           </div>
           <div className="ops-health-list">
-            <HealthRow icon={<ServerCog size={16} />} label="后台 worker" value={ops.workerStatus} ok={!!ops.systemHealth.background_workers_enabled} />
+            <HealthRow icon={<ServerCog size={16} />} label="后台 worker（配置）" value={ops.workerStatus} ok={!!ops.systemHealth.background_workers_enabled} />
+            <HealthRow icon={<Clock3 size={16} />} label="定时扫描调度器" value={schedulerStatus(ops.systemHealth)} ok={ops.systemHealth.scheduler?.healthy !== false} />
             <HealthRow icon={<Wifi size={16} />} label="通知 worker" value={ops.notificationWorkerStatus} ok={!!ops.systemHealth.notification_worker_enabled} />
             <HealthRow icon={<ListChecks size={16} />} label="队列后端" value={ops.systemHealth.queue_backend || "unknown"} ok={!!ops.systemHealth.queue_backend} />
             <HealthRow icon={<HardDrive size={16} />} label="Redis" value={ops.redisStatus} ok={ops.redisStatus !== "Redis 未配置"} />

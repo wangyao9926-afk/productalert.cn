@@ -35,6 +35,7 @@ from app.monitor import create_site, create_source, scan_site, scan_source, sche
 from app.notifier import notification_worker_loop, process_pending_notifications
 from app.real_site_benchmark import real_site_benchmark_summary
 from app.settings import database_settings, production_web_configuration_errors, queue_settings, runtime_settings, web_security_settings
+from app.runtime_health import SCHEDULER_COMPONENT, runtime_component_health
 from app.task_queue import enqueue_site_scan, enqueue_source_scan, queue_backend_name, recover_queued_scan_tasks, scan_worker_loop
 from app.url_safety import UnsafeUrlError, validate_public_http_url
 
@@ -168,6 +169,8 @@ async def system_health(user: dict = CurrentUser) -> dict:
     settings = database_settings()
     queue = queue_settings()
     runtime = runtime_settings()
+    scheduler_required = queue.backend == "rq" or runtime.start_background_workers
+    scheduler = runtime_component_health(SCHEDULER_COMPONENT)
     return {
         "ok": True,
         "database_backend": settings.backend,
@@ -176,6 +179,11 @@ async def system_health(user: dict = CurrentUser) -> dict:
         "redis_configured": bool(queue.redis_url),
         "background_workers_enabled": runtime.start_background_workers,
         "notification_worker_enabled": runtime.start_background_workers and runtime.start_notification_worker,
+        "scheduler": {
+            "required": scheduler_required,
+            "last_seen_at": scheduler["last_seen_at"],
+            "healthy": scheduler["healthy"] if scheduler_required else None,
+        },
         "sqlite_path": str(settings.sqlite_path) if settings.sqlite_path else None,
     }
 

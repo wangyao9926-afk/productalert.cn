@@ -15,6 +15,8 @@ class OperationsSummaryUiTests(unittest.TestCase):
         self.assertIn("notificationStatus.failed", page_source)
         self.assertIn("failure_categories", page_source)
         self.assertIn("queue: queueSummary(scanJobs)", page_source)
+        self.assertIn("定时扫描调度器", page_source)
+        self.assertIn("schedulerStatus", page_source)
 
 
 if __name__ == "__main__":

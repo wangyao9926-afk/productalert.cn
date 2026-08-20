@@ -70,5 +70,10 @@ export type SystemHealth = {
   redis_configured?: boolean;
   background_workers_enabled?: boolean;
   notification_worker_enabled?: boolean;
+  scheduler?: {
+    required: boolean;
+    last_seen_at: string | null;
+    healthy: boolean | null;
+  };
   sqlite_path?: string | null;
 };

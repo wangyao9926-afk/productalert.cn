@@ -1646,6 +1646,14 @@ async def scan_site(site_id: int, notify: bool = True, trigger_type: str = "manu
 
 async def scheduler_loop() -> None:
     while True:
+        try:
+            from app.runtime_health import SCHEDULER_COMPONENT, record_runtime_heartbeat
+
+            record_runtime_heartbeat(SCHEDULER_COMPONENT)
+        except Exception:
+            # A heartbeat must never stop the scheduling loop. If storage is unavailable,
+            # the missing heartbeat will make the outage visible through system health.
+            pass
         with get_db() as db:
             sources = fetchall(
                 db,

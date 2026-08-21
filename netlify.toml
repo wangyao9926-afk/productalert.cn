@@ -5,6 +5,8 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # Public API origin compiled into the production React frontend.
+  VITE_API_BASE_URL = "https://productalert.up.railway.app"
 
 [[redirects]]
   from = "/*"
